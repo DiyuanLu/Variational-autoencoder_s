@@ -12,19 +12,19 @@ from tensorflow.contrib.learn.python.learn.datasets.mnist import read_data_sets 
 import ipdb
 
 
-SAVE_EVERY = 20000
-plot_every = 5000
+save_every = 2000       #20000         #     
+plot_every = 100          #5000         # 
 version = "MNIST_2level"
-logdir = ".model/" + version 
-results_dir = ".results/" + version
-data_dir = "./MNIST_data"
+logdir = "model/" + version 
+results_dir = "results/" + version
+data_dir = "MNIST_data"
 n_pixels = 28 * 28
 
 # HyperParameters
 latent_dim_1 = 20
-h_dim_1 = 500  # size of network
+h_dim_1 = 200  # size of network
 latent_dim_2 = 2
-h_dim_2 = 200  # size of network
+h_dim_2 = 100  # size of network
 # load data
 mnist = read_data_sets(data_dir, one_hot=True)
 
@@ -130,7 +130,7 @@ mu: Mean parameters for the variational family Normal
 sigma: Standard deviation parameters for the variational family Normal
 """
 # layer 1
-W_enc = weight_variables([n_pixels, h_dim_1], "W_enc_1")
+W_enc_1 = weight_variables([n_pixels, h_dim_1], "W_enc_1")
 b_enc_1 = bias_variable([h_dim_1], "b_enc_1")
 # tanh - activation function        avoid vanishing gradient in generative models
 h_enc_1 = tf.nn.tanh(FC_Layer(X, W_enc_1, b_enc_1))
@@ -149,8 +149,8 @@ noise = tf.random_normal([1, latent_dim_1])
 # z_1 is the fisrt leverl output(latent variable) of our Encoder
 z_1 = mu_1 + tf.multiply(noise, tf.exp(0.5*logstd_1))
 
-# layer 1
-W_enc_2 = weight_variables([latent_dim_2, h_dim_2], "W_enc_2")
+# second level---------------------------- layer 1
+W_enc_2 = weight_variables([latent_dim_1, h_dim_2], "W_enc_2")
 b_enc_2 = bias_variable([h_dim_2], "b_enc_2")
 # tanh - activation function        avoid vanishing gradient in generative models
 h_enc_2 = tf.nn.tanh(FC_Layer(z_1, W_enc_2, b_enc_2))
@@ -203,10 +203,10 @@ reconstruction = tf.nn.sigmoid(FC_Layer(h_dec_1, W_rec_1, b_rec_1))
 # Loss function = reconstruction error + regularization(similar image's latent representation close)
 log_likelihood = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
 
-KL_divergence = -0.5 * tf.reduce_sum(1 + 2*logstd - tf.pow(mu, 2) - tf.exp(2 * logstd), reduction_indices=1)
+KL_divergence = -0.5 * tf.reduce_sum(1 + 2*logstd_2 - tf.pow(mu_2, 2) - tf.exp(2 * logstd_2), reduction_indices=1)
 
-VAE_loss = tf.reduce_mean(log_likelihood + KL_divergence)
-optimizer = tf.train.AdadeltaOptimizer().minimize(-VAE_loss)
+VAE_loss = tf.reduce_mean(log_likelihood - KL_divergence)
+optimizer = tf.train.AdadeltaOptimizer().minimize(- VAE_loss)
 
 # Training
 #init all variables and start the session!
@@ -216,22 +216,22 @@ sess.run(init)
 ## Add ops to save and restore all the variables.
 saver = tf.train.Saver()
 
-num_iterations = 5000       #1000001   # 
-recording_interval = 100   #1000    # 
+num_iterations = 500       #1000001   # 
+print_every = 100   #1000    # 
 #store value for these 3 terms so we can plot them later
 variational_lower_bound_array = []
 log_likelihood_array = []
 KL_term_array = []
-iteration_array = [i*recording_interval for i in range(num_iterations/recording_interval)]
+iteration_array = [i*print_every for i in range(num_iterations/print_every)]
 
 for ii in range(num_iterations):
-    save_name = results_dir + '/' + "_step{}_".format(ii)
+    save_name = results_dir + '/' + "step{}_".format(ii)
     # np.round to make MNIST binary
     #get first batch (200 digits)
     x_batch = np.round(mnist.train.next_batch(200)[0])
     #run our optimizer on our data
     sess.run(optimizer, feed_dict={X: x_batch})
-    if (ii % recording_interval == 0):
+    if (ii % print_every == 0):
         #every 1K iterations record these values
         vlb_eval = VAE_loss.eval(feed_dict={X: x_batch})
         print "Iteration: {}, Loss: {}".format(ii, vlb_eval)
@@ -239,16 +239,47 @@ for ii in range(num_iterations):
         log_likelihood_array.append(np.mean(log_likelihood.eval(feed_dict={X: x_batch})))
         KL_term_array.append(np.mean(KL_divergence.eval(feed_dict={X: x_batch})))
 
-    if (ii % 10 == 0):
+    if (ii % save_every == 0):
         if not os.path.exists(logdir):
             os.makedirs(logdir)
         saver.save(sess, logdir + '/' + str(ii))
         
 
     if (ii % plot_every == 0):
-        plot_prior(ii)
+        #plot_prior(ii)
         plot_test(ii, save_name=save_name)
+
+        # plot posterior predictive space
+        # Get fixed MNIST digits for plotting posterior means during training
         
+        np_x_fixed, np_y = mnist.test.next_batch(100)
+        np_x_fixed = np_x_fixed.reshape(100, n_pixels)
+        np_x_fixed = (np_x_fixed > 0.5).astype(np.float32)
+        np_q_mu = sess.run(mu_1, {X: np_x_fixed})
+        cmap = "jet"
+        f, ax = plt.subplots(1, figsize=(6 * 1.1618, 6))
+        im = ax.scatter(np_q_mu[:, 0], np_q_mu[:, 1], c=np.argmax(np_y, 1), cmap=cmap, alpha=0.7)
+        ax.set_xlabel('First dimension of sampled latent variable $z_1$')
+        ax.set_ylabel('Second dimension of sampled latent variable mean $z_2$')
+        ax.set_xlim([-10., 10.])
+        ax.set_ylim([-10., 10.])
+        f.colorbar(im, ax=ax, label='Digit class')
+        plt.tight_layout()
+        plt.savefig(save_name + '_posterior_predictive_map_frame_{}.png'.format(ii), format="png")
+        plt.close()
+        
+        nx = ny = 20
+        x_values = np.linspace(-3, 3, nx)
+        y_values = np.linspace(-3, 3, ny)
+        canvas = np.empty((28 * ny, 28 * nx))
+        for ii, yi in enumerate(x_values):
+          for j, xi in enumerate(y_values):
+            np_z = np.array([[xi, yi]])
+            x_mean = sess.run(reconstruction, {z_2: np_z})
+            canvas[(nx - ii - 1) * 28:(nx - ii) * 28, j *
+                   28:(j + 1) * 28] = x_mean[0].reshape(28, 28)
+        imsave(save_name + '_prior_predictive_map_frame_{}.png'.format(ii), canvas, format="png")
+        plt.close()
 
 plt.figure()
 #for the number of iterations we had 
