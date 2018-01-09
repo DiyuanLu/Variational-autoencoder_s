@@ -14,16 +14,17 @@ import ipdb
 
 SAVE_EVERY = 20000
 plot_every = 5000
-version = "MNIST"
+version = "MNIST_2level"
 logdir = ".model/" + version 
 results_dir = ".results/" + version
 data_dir = "./MNIST_data"
 n_pixels = 28 * 28
 
 # HyperParameters
-latent_dim = 20
-h_dim = 500  # size of network
-
+latent_dim_1 = 20
+h_dim_1 = 500  # size of network
+latent_dim_2 = 2
+h_dim_2 = 200  # size of network
 # load data
 mnist = read_data_sets(data_dir, one_hot=True)
 
@@ -118,40 +119,86 @@ def plot_prior(model_No, load_model=False):
                         'prior_predictive_map_frame_%d.png' % model_No), canvas)
 ############################ Encoder ############################
 
-
+"""def encoder_net(x, latent_dim, h_dim):
+Construct an inference network parametrizing a Gaussian.
+Args:
+x: A batch of MNIST digits.
+latent_dim: The latent dimensionality.
+hidden_size: The size of the neural net hidden layers.
+Returns:
+mu: Mean parameters for the variational family Normal
+sigma: Standard deviation parameters for the variational family Normal
+"""
 # layer 1
-W_enc = weight_variables([n_pixels, h_dim], "W_enc")
-b_enc = bias_variable([h_dim], "b_enc")
+W_enc = weight_variables([n_pixels, h_dim_1], "W_enc_1")
+b_enc_1 = bias_variable([h_dim_1], "b_enc_1")
 # tanh - activation function        avoid vanishing gradient in generative models
-h_enc = tf.nn.tanh(FC_Layer(X, W_enc, b_enc))
+h_enc_1 = tf.nn.tanh(FC_Layer(X, W_enc_1, b_enc_1))
 
 # layer 2   Output mean and std of the latent variable distribution
-W_mu = weight_variables([h_dim, latent_dim], "W_mu")
-b_mu = bias_variable([latent_dim], "b_mu")
-mu = FC_Layer(h_enc, W_mu, b_mu)
+W_mu_1 = weight_variables([h_dim_1, latent_dim_1], "W_mu_1")
+b_mu_1 = bias_variable([latent_dim_1], "b_mu_1")
+mu_1 = FC_Layer(h_enc_1, W_mu_1, b_mu_1)
 
-W_logstd = weight_variables([h_dim, latent_dim], "W_logstd")
-b_logstd = bias_variable([latent_dim], "b_logstd")
-logstd = FC_Layer(h_enc, W_logstd, b_logstd)
-
+W_logstd_1 = weight_variables([h_dim_1, latent_dim_1], "W_logstd_1")
+b_logstd_1 = bias_variable([latent_dim_1], "b_logstd_1")
+logstd_1 = FC_Layer(h_enc_1, W_logstd_1, b_logstd_1)
 
 # Reparameterize import Randomness
-noise = tf.random_normal([1, latent_dim])
-# z is the ultimate output(latent variable) of our Encoder
-z = mu + tf.multiply(noise, tf.exp(0.5*logstd))
+noise = tf.random_normal([1, latent_dim_1])
+# z_1 is the fisrt leverl output(latent variable) of our Encoder
+z_1 = mu_1 + tf.multiply(noise, tf.exp(0.5*logstd_1))
+
+# layer 1
+W_enc_2 = weight_variables([latent_dim_2, h_dim_2], "W_enc_2")
+b_enc_2 = bias_variable([h_dim_2], "b_enc_2")
+# tanh - activation function        avoid vanishing gradient in generative models
+h_enc_2 = tf.nn.tanh(FC_Layer(z_1, W_enc_2, b_enc_2))
+
+# layer 2   Output mean and std of the latent variable distribution
+W_mu_2 = weight_variables([h_dim_2, latent_dim_2], "W_mu_2")
+b_mu_2 = bias_variable([latent_dim_2], "b_mu_2")
+mu_2 = FC_Layer(h_enc_2, W_mu_2, b_mu_2)
+
+W_logstd_2 = weight_variables([h_dim_2, latent_dim_2], "W_logstd_2")
+b_logstd_2 = bias_variable([latent_dim_2], "b_logstd_2")
+logstd_2 = FC_Layer(h_enc_2, W_logstd_2, b_logstd_2)
+
+# Reparameterize import Randomness
+noise_2 = tf.random_normal([1, latent_dim_2])
+# z_1 is the ultimate output(latent variable) of our Encoder
+z_2 = mu_2 + tf.multiply(noise_2, tf.exp(0.5*logstd_2))
 
 ############################ Dencoder ############################
+"""Build a generative network parametrizing the likelihood of the data
+Args:
+z: Samples of latent variables
+hidden_size: Size of the hidden state of the neural net
+Returns:
+bernoulli_logits: logits for the Bernoulli likelihood of the data
+"""
 # layer 1
-W_dec = weight_variables([latent_dim, h_dim], "W_dec")
-b_dec = bias_variable([h_dim], "b_dec")
+W_dec_2 = weight_variables([latent_dim_2, h_dim_2], "W_dec_2")
+b_dec_2 = bias_variable([h_dim_2], "b_dec_2")
 # tanh - decode the latent representation
-h_dec = tf.nn.tanh(FC_Layer(z, W_dec, b_dec))
+h_dec_2 = tf.nn.tanh(FC_Layer(z_2, W_dec_2, b_dec_2))
+
+# layer2 - reconstruction the first leverl latent variables
+W_rec_2 = weight_variables([h_dim_2, latent_dim_1], "W_dec_2")
+b_rec_2 = bias_variable([latent_dim_1], "b_rec_2")
+recon_z1 = tf.nn.sigmoid(FC_Layer(h_dec_2, W_rec_2, b_rec_2)) # ?????
+
+# layer 1
+W_dec_1 = weight_variables([latent_dim_1, h_dim_1], "W_dec")
+b_dec_1 = bias_variable([h_dim_1], "b_dec")
+# tanh - decode the latent representation
+h_dec_1 = tf.nn.tanh(FC_Layer(recon_z1, W_dec_1, b_dec_1))
 
 # layer2 - reconstruction the image and output 0 or 1
-W_rec = weight_variables([h_dim, n_pixels], "W_dec")
-b_rec = bias_variable([n_pixels], "b_rec")
+W_rec_1 = weight_variables([h_dim_1, n_pixels], "W_rec_1")
+b_rec_1 = bias_variable([n_pixels], "b_rec_1")
 # 784 bernoulli parameter Output
-reconstruction = tf.nn.sigmoid(FC_Layer(h_dec, W_rec, b_rec))
+reconstruction = tf.nn.sigmoid(FC_Layer(h_dec_1, W_rec_1, b_rec_1))
 
 # Loss function = reconstruction error + regularization(similar image's latent representation close)
 log_likelihood = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
@@ -169,8 +216,8 @@ sess.run(init)
 ## Add ops to save and restore all the variables.
 saver = tf.train.Saver()
 
-num_iterations = 1000001   # 50
-recording_interval = 1000    # 1000   #
+num_iterations = 5000       #1000001   # 
+recording_interval = 100   #1000    # 
 #store value for these 3 terms so we can plot them later
 variational_lower_bound_array = []
 log_likelihood_array = []
