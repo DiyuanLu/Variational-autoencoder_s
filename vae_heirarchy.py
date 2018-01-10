@@ -1,7 +1,9 @@
-# source code from Siraj 
+# source code adapted from Siraj 
 
 import numpy as np
 import tensorflow as tf
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import time #lets clock training time..
 import os
@@ -12,8 +14,10 @@ from tensorflow.contrib.learn.python.learn.datasets.mnist import read_data_sets 
 import ipdb
 
 
-save_every = 2000       #20000         #     
-plot_every = 100          #5000         # 
+save_every = 25000         #    2000       # 
+plot_every = 5000         #100          #
+num_iterations = 1000001   #500       # 
+print_every = 2000    # 100   #
 version = "MNIST_2level"
 logdir = "model/" + version 
 results_dir = "results/" + version
@@ -22,7 +26,7 @@ n_pixels = 28 * 28
 
 # HyperParameters
 latent_dim_1 = 20
-h_dim_1 = 200  # size of network
+h_dim_1 = 500  # size of network
 latent_dim_2 = 2
 h_dim_2 = 100  # size of network
 # load data
@@ -216,8 +220,7 @@ sess.run(init)
 ## Add ops to save and restore all the variables.
 saver = tf.train.Saver()
 
-num_iterations = 500       #1000001   # 
-print_every = 100   #1000    # 
+
 #store value for these 3 terms so we can plot them later
 variational_lower_bound_array = []
 log_likelihood_array = []
@@ -225,6 +228,7 @@ KL_term_array = []
 iteration_array = [i*print_every for i in range(num_iterations/print_every)]
 
 for ii in range(num_iterations):
+    
     save_name = results_dir + '/' + "step{}_".format(ii)
     # np.round to make MNIST binary
     #get first batch (200 digits)
@@ -238,11 +242,13 @@ for ii in range(num_iterations):
         variational_lower_bound_array.append(vlb_eval)
         log_likelihood_array.append(np.mean(log_likelihood.eval(feed_dict={X: x_batch})))
         KL_term_array.append(np.mean(KL_divergence.eval(feed_dict={X: x_batch})))
-
+    t1 = time.time()
     if (ii % save_every == 0):
+        t2 = time.time()
         if not os.path.exists(logdir):
             os.makedirs(logdir)
         saver.save(sess, logdir + '/' + str(ii))
+        print("Time for every {} interations is {}".format(save_every, (t2 - t1)))
         
 
     if (ii % plot_every == 0):
@@ -284,6 +290,7 @@ for ii in range(num_iterations):
 plt.figure()
 #for the number of iterations we had 
 #plot these 3 terms
+np.savez("losses_file.npz", )
 plt.plot(iteration_array, variational_lower_bound_array)
 plt.plot(iteration_array, KL_term_array)
 plt.plot(iteration_array, log_likelihood_array)

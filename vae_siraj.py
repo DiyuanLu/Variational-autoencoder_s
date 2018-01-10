@@ -1,5 +1,7 @@
 import numpy as np
 import tensorflow as tf
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import time #lets clock training time..
 import os
@@ -13,9 +15,9 @@ import ipdb
 SAVE_EVERY = 20000
 plot_every = 5000
 version = "MNIST"
-logdir = ".model/" + version 
-results_dir = ".results/" + version
-data_dir = "./MNIST_data"
+logdir = "model/" + version 
+results_dir = "results/" + version
+data_dir = "/MNIST_data"
 n_pixels = 28 * 28
 
 # HyperParameters
@@ -193,7 +195,7 @@ for i in range(num_iterations):
         
 
     if (i % plot_every == 0):
-        plot_prior(model_No)
+        #plot_prior(model_No)
         plot_test(i, save_name=save_name)
         
 
