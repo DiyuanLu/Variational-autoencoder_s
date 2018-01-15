@@ -18,11 +18,17 @@ save_every = 25000         #    2000       #
 plot_every = 5000         #100          #
 num_iterations = 1000001   #500       # 
 print_every = 2000    # 100   #
-version = "MNIST_2level"
+version = "MNIST_2level-end2endLoss"
 logdir = "model/" + version 
 results_dir = "results/" + version
 data_dir = "MNIST_data"
 n_pixels = 28 * 28
+
+for ind, folder in enumerate([logdir, results_dir]):
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+        
+
 
 # HyperParameters
 latent_dim_1 = 20
@@ -86,6 +92,7 @@ def plot_test(model_No, load_model = False, save_name="save"):
     plt.subplots_adjust(left=0.06, bottom=0.05, right=0.95, top=0.95,
                 wspace=0.30, hspace=0.22)
     plt.savefig(save_name + "samples.png", format="png")
+    plt.close()
 
 def plot_prior(model_No, load_model=False):
     if load_model:
@@ -100,7 +107,7 @@ def plot_prior(model_No, load_model=False):
     sess = tf.InteractiveSession()
     sess.run(init)
     
-    ipdb.set_trace()
+    #ipdb.set_trace()
     for ii, yi in enumerate(x_values):
       for j, xi in enumerate(y_values):
         z[0:2] = np.array([[xi, yi]])
@@ -121,6 +128,7 @@ def plot_prior(model_No, load_model=False):
                28:(j + 1) * 28] = reconstruction[0].reshape(28, 28)
     imsave(os.path.join(logdir,
                         'prior_predictive_map_frame_%d.png' % model_No), canvas)
+                        
 ############################ Encoder ############################
 
 """def encoder_net(x, latent_dim, h_dim):
@@ -297,5 +305,5 @@ plt.plot(iteration_array, log_likelihood_array)
 plt.legend(['Variational Lower Bound', 'KL divergence', 'Log Likelihood'], bbox_to_anchor=(1.05, 1), loc=2)
 plt.title('Loss per iteration')
 plt.savefig(save_name+"loss.png", format="png")
-
+plt.close()
 
