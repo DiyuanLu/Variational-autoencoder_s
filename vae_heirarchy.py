@@ -6,8 +6,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import time #lets clock training time..
+import datetime
 import os
-from scipy.misc import imsave
+#from imageio import imwrite
 #import data
 #from tensorflow.examples.tutorials.mnist import input_data    # DOWNLOAD DATA
 from tensorflow.contrib.learn.python.learn.datasets.mnist import read_data_sets    #read data
@@ -18,22 +19,25 @@ save_every = 25000         #    2000       #
 plot_every = 5000         #100          #
 num_iterations = 1000001   #500       # 
 print_every = 2000    # 100   #
+end2end = True
 version = "MNIST_2level-end2endLoss"
-logdir = "model/" + version 
-results_dir = "results/" + version
+
 data_dir = "MNIST_data"
 n_pixels = 28 * 28
 
-for ind, folder in enumerate([logdir, results_dir]):
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-        
+results_dir = 'results/' + version + "/{0:%Y-%m-%dT%H-%M-%S}".format(datetime.datetime.now())
+logdir = 'model/' + version + "/{0:%Y-%m-%dT%H-%M-%S}".format(datetime.datetime.now())
 
+if not os.path.exists(logdir):
+    os.makedirs(logdir)
+
+if not os.path.exists(results_dir):
+    os.makedirs(results_dir)
 
 # HyperParameters
-latent_dim_1 = 20
+latent_dim_1 = 100
 h_dim_1 = 500  # size of network
-latent_dim_2 = 2
+latent_dim_2 = 10
 h_dim_2 = 100  # size of network
 # load data
 mnist = read_data_sets(data_dir, one_hot=True)
@@ -41,6 +45,31 @@ mnist = read_data_sets(data_dir, one_hot=True)
 # input the image
 X = tf.placeholder(tf.float32, shape=([None, n_pixels]))
 #Z = tf.placeholder(tf.float32, shape=([None, latent_dim]))
+
+def highwaynet(inputs, h_dim=None, scope="highwaynet", reuse=None):
+    '''Highway networks, see https://arxiv.org/abs/1505.00387
+
+    Args:
+      inputs: A 3D tensor of shape [N, T, W].
+      h_dim: An int or `None`. Specifies the number of units in the highway layer
+             or uses the input size if `None`.
+      scope: Optional scope for `variable_scope`.  
+      reuse: Boolean, whether to reuse the weights of a previous layer
+        by the same name.
+
+    Returns:
+      A 3D tensor of shape [N, T, W].
+    '''
+    if not h_dim:
+        h_dim = inputs.get_shape()[-1]
+        
+    with tf.variable_scope(scope, reuse=reuse):
+        H = tf.layers.dense(inputs, units=h_dim, activation=tf.nn.relu, name="dense1")
+        T = tf.layers.dense(inputs, units=h_dim, activation=tf.nn.sigmoid, name="dense2")
+        C = 1. - T
+        outputs = H * T + inputs * C
+    return outputs
+
 
 def weight_variables(shape, name):
     initial = tf.truncated_normal(shape, stddev=0.1)
@@ -94,6 +123,7 @@ def plot_test(model_No, load_model = False, save_name="save"):
     plt.savefig(save_name + "samples.png", format="png")
     plt.close()
 
+
 def plot_prior(model_No, load_model=False):
     if load_model:
         saver.restore(sess, os.path.join(os.getcwd(), logdir + '/' + "{}".format(model_No)))
@@ -126,8 +156,8 @@ def plot_prior(model_No, load_model=False):
     
         canvas[(nx - ii - 1) * 28:(nx - ii) * 28, j *
                28:(j + 1) * 28] = reconstruction[0].reshape(28, 28)
-    imsave(os.path.join(logdir,
-                        'prior_predictive_map_frame_%d.png' % model_No), canvas)
+    plt.savefig(os.path.join(logdir,
+                        'prior_predictive_map_frame_%d.png' % model_No), format="jpg")   # canvas
                         
 ############################ Encoder ############################
 
@@ -204,7 +234,10 @@ recon_z1 = tf.nn.sigmoid(FC_Layer(h_dec_2, W_rec_2, b_rec_2)) # ?????
 W_dec_1 = weight_variables([latent_dim_1, h_dim_1], "W_dec")
 b_dec_1 = bias_variable([h_dim_1], "b_dec")
 # tanh - decode the latent representation
-h_dec_1 = tf.nn.tanh(FC_Layer(recon_z1, W_dec_1, b_dec_1))
+
+#ipdb.set_trace()
+residual_z1 = tf.identity(z_1) + recon_z1
+h_dec_1 = tf.nn.tanh(FC_Layer(residual_z1 , W_dec_1, b_dec_1))
 
 # layer2 - reconstruction the image and output 0 or 1
 W_rec_1 = weight_variables([h_dim_1, n_pixels], "W_rec_1")
@@ -213,12 +246,28 @@ b_rec_1 = bias_variable([n_pixels], "b_rec_1")
 reconstruction = tf.nn.sigmoid(FC_Layer(h_dec_1, W_rec_1, b_rec_1))
 
 # Loss function = reconstruction error + regularization(similar image's latent representation close)
-log_likelihood = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
+# X and the reconstruction
+if end2end:
+    log_likelihood1 = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
 
-KL_divergence = -0.5 * tf.reduce_sum(1 + 2*logstd_2 - tf.pow(mu_2, 2) - tf.exp(2 * logstd_2), reduction_indices=1)
+    KL_divergence1 = -0.5 * tf.reduce_sum(1 + 2*logstd_2 - tf.pow(mu_2, 2) - tf.exp(2 * logstd_2), reduction_indices=1)
 
-VAE_loss = tf.reduce_mean(log_likelihood - KL_divergence)
-optimizer = tf.train.AdadeltaOptimizer().minimize(- VAE_loss)
+    VAE_loss = tf.reduce_mean(log_likelihood1 - KL_divergence1)
+else:
+    log_likelihood1 = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
+
+    KL_divergence1 = -0.5 * tf.reduce_sum(1 + 2*logstd_1 - tf.pow(mu_1, 2) - tf.exp(2 * logstd_1), reduction_indices=1)
+
+    # latent z1 and reconstruced latent z1
+    log_likelihood2 = tf.reduce_sum(z_1 * tf.log(recon_z1 + 1e-9) + (1 - z_1) * tf.log(1 - recon_z1 + 1e-9))
+
+    KL_divergence2 = -0.5 * tf.reduce_sum(1 + 2*logstd_2 - tf.pow(mu_2, 2) - tf.exp(2 * logstd_2), reduction_indices=1)
+
+    VAE_loss1 = tf.reduce_mean(log_likelihood1 - KL_divergence1)
+    VAE_loss2 = tf.reduce_mean(log_likelihood2 - KL_divergence2)
+    VAE_loss = VAE_loss1 + VAE_loss2
+
+optimizer = tf.train.AdadeltaOptimizer(0.0005).minimize(- VAE_loss)   # AdadeltaOptimizer
 
 # Training
 #init all variables and start the session!
@@ -231,8 +280,10 @@ saver = tf.train.Saver()
 
 #store value for these 3 terms so we can plot them later
 variational_lower_bound_array = []
-log_likelihood_array = []
-KL_term_array = []
+log_likelihood_array1 = []
+log_likelihood_array2 = []
+KL_term_array1 = []
+KL_term_array2 = []
 iteration_array = [i*print_every for i in range(num_iterations/print_every)]
 
 for ii in range(num_iterations):
@@ -243,14 +294,17 @@ for ii in range(num_iterations):
     x_batch = np.round(mnist.train.next_batch(200)[0])
     #run our optimizer on our data
     sess.run(optimizer, feed_dict={X: x_batch})
-    if (ii % print_every == 0):
+    if (ii % 10 == 0):
         #every 1K iterations record these values
         vlb_eval = VAE_loss.eval(feed_dict={X: x_batch})
         print "Iteration: {}, Loss: {}".format(ii, vlb_eval)
         variational_lower_bound_array.append(vlb_eval)
-        log_likelihood_array.append(np.mean(log_likelihood.eval(feed_dict={X: x_batch})))
-        KL_term_array.append(np.mean(KL_divergence.eval(feed_dict={X: x_batch})))
+        log_likelihood_array1.append(np.mean(log_likelihood1.eval(feed_dict={X: x_batch})))
+        KL_term_array1.append(np.mean(KL_divergence1.eval(feed_dict={X: x_batch})))
+        #log_likelihood_array2.append(np.mean(log_likelihood1.eval(feed_dict={X: x_batch})))
+        #KL_term_array2.append(np.mean(KL_divergence2.eval(feed_dict={X: x_batch})))
     t1 = time.time()
+    
     if (ii % save_every == 0):
         t2 = time.time()
         if not os.path.exists(logdir):
@@ -288,11 +342,12 @@ for ii in range(num_iterations):
         canvas = np.empty((28 * ny, 28 * nx))
         for ii, yi in enumerate(x_values):
           for j, xi in enumerate(y_values):
-            np_z = np.array([[xi, yi]])
-            x_mean = sess.run(reconstruction, {z_2: np_z})
+            np_z = np.expand_dims(np.append(np.ones((8)), np.array([[xi, yi]])), axis=0)
+            #ipdb.set_trace()
+            x_mean = sess.run(reconstruction, {z_2: np_z, X: np_x_fixed})
             canvas[(nx - ii - 1) * 28:(nx - ii) * 28, j *
                    28:(j + 1) * 28] = x_mean[0].reshape(28, 28)
-        imsave(save_name + '_prior_predictive_map_frame_{}.png'.format(ii), canvas, format="png")
+        plt.savefig(save_name + '_prior_predictive_map_frame_{}'.format(ii), format="png")   # canvas
         plt.close()
 
 plt.figure()
