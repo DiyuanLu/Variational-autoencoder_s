@@ -21,23 +21,23 @@ import argparse
 #mnist = input_data.read_data_sets("MNIST_data/")
 
 
-BATCH_SIZE = 64
+BATCH_SIZE = 100
 RANDOM_DIM = 100
 HEIGHT, WIDTH, CHANNEL, n_pixels = 128, 128, 1, 128 * 128
 CHECKPOINT_EVERY = 100   #
 EPOCHS = int(1e3)+1   # int(1e5)
 LEARNING_RATE = 1e-3
-SAMPLE_SIZE = 100000
+
 L2_REGULARIZATION_STRENGTH = 0
 SILENCE_THRESHOLD = 0.1    # 0.3
 MAX_TO_KEEP = 20
 METADATA = False
-CHECK_EVERY = 1
-SAVE_EVERY = 50
-PLOT_EVERY = 20
+CHECK_EVERY = 100
+SAVE_EVERY = 100
+PLOT_EVERY = 100
 slim = tf.contrib.slim    #for testing
 gen_eval_num = 20
-VERSION =  'FSD_pad'      #newPokemonmnist_pmFSD_pretty_128'newspectrogram' 'OLLO_NO1'
+VERSION =  'FSD_pad'      #_masknewPokemonmnist_pmFSD_pretty_128'newspectrogram' 'OLLO_NO1'
 DATA_ROOT = 'training_data'
 LOGDIR_ROOT = 'model'
 DATESTRING = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.datetime.now())
@@ -267,17 +267,11 @@ def process_data():
     images = []
     for each in os.listdir(pokemon_dir):
         images.append(os.path.join(pokemon_dir, each))
-
     #  Save the last 16 images for validation
     train_images = tf.convert_to_tensor(images[:-BATCH_SIZE] * EPOCHS, dtype = tf.string)
     test_images = tf.convert_to_tensor(images[-BATCH_SIZE:] * EPOCHS, dtype = tf.string)
     #ipdb.set_trace()
-    #valid_images = tf.convert_to_tensor(images[-10:], dtype = tf.string)
-    
-    #images_queue = tf.train.slice_input_producer(
-                                        #[all_images], num_epochs=None)
-    #test_images_queue = tf.train.slice_input_producer(
-                                        #[test_images], num_epochs=None)                                   
+
     train_queue = tf.train.string_input_producer(train_images,
                                                         num_epochs=None)
     test_queue = tf.train.string_input_producer(test_images,
@@ -309,7 +303,15 @@ def process_data():
     train_image = train_image / 255.0
     test_image = tf.cast(test_image, tf.float32)
     test_image = test_image / 255.0
-    
+
+    #spectro, magnit = tf.train.batch([spectro, magnit],
+                            #shapes=[(None, hp.n_mels*hp.r), (None, (1+hp.n_fft//2)*hp.r)],
+                            #num_threads=32,
+                            #batch_size=hp.batch_size, 
+                            #capacity=hp.batch_size*32,   
+                            #dynamic_pad=True)
+
+        
     train_images_batch = tf.train.shuffle_batch(
                                     [train_image], batch_size = BATCH_SIZE,
                                     num_threads = 4, capacity = 200 + 3* BATCH_SIZE, min_after_dequeue = 200) #
@@ -441,6 +443,8 @@ def train():
         is_train = tf.placeholder(tf.bool, name='is_train')
 
     # #### Loss
+    #mask = 
+    #X *=
     log_likelihood1 = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
     
     KL_divergence1 = -0.5 * tf.reduce_sum(1 + 2*logstd_2 - tf.pow(mu_2, 2) - tf.exp(2 * logstd_2), reduction_indices=1)
@@ -503,83 +507,83 @@ def train():
     iteration_array = [i*CHECK_EVERY for i in range(EPOCHS/CHECK_EVERY)]
     for ii in range(saved_global_step + 1, EPOCHS):
         t1 = time.time()
-        save_name = result_dir + '/' + "VAE_FSD_PAD_step{}_".format(ii)
-        print("epoch: ", ii)
+        
         # load training batch
-        #ipdb.set_trace()
-        for batch in range(batch_num - 1):
-            if batch == np.int(batch_num/2):
-                print "half way in one epoch"
+        for batch in range(batch_num):
+            save_name = result_dir + '/' + "VAE_FSD_PAD_step{}_".format(batch)
+            if batch % 100 == 0:
+                print "batch", batch
             x_batch = sess.run(image_batch)
             t_batch = sess.run(test_batch)
             
             #run our optimizer on our data
             sess.run(optimizer, feed_dict={X: x_batch})
 
-        if (ii % CHECK_EVERY == 0):
-            #every 1K iterations record these values
-            vlb_eval = VAE_loss.eval(session=sess, feed_dict={X: x_batch})
-            print "Iteration: {}, Loss: {}".format(ii, vlb_eval)
-            variational_lower_bound_array.append(vlb_eval)
-            log_likelihood_array1.append(np.mean(log_likelihood1.eval(session=sess, feed_dict={X: x_batch})))
-            KL_term_array1.append(np.mean(KL_divergence1.eval(session=sess, feed_dict={X: x_batch})))
+            if (batch % BATCH_SIZE == 0):
+                #every 1K iterations record these values
+                vlb_eval = VAE_loss.eval(session=sess, feed_dict={X: x_batch})
+                print "Iteration: {}, Loss: {}".format(ii, vlb_eval)
+                variational_lower_bound_array.append(vlb_eval)
+                log_likelihood_array1.append(np.mean(log_likelihood1.eval(session=sess, feed_dict={X: x_batch})))
+                KL_term_array1.append(np.mean(KL_divergence1.eval(session=sess, feed_dict={X: x_batch})))
             #log_likelihood_array2.append(np.mean(log_likelihood1.eval(feed_dict={X: x_batch})))
             #KL_term_array2.append(np.mean(KL_divergence2.eval(feed_dict={X: x_batch})))
-        t1 = time.time()
+        
             
-        if (ii % PLOT_EVERY== 0):
-            #plot_prior(ii)
-            #ipdb.set_trace()
-            plot_test(sess, ii, t_batch, save_name=save_name)
+            if (batch % CHECK_EVERY == 0):
+                #plot_prior(ii)
+                #ipdb.set_trace()
+                plot_test(sess, batch, t_batch, save_name=save_name)
 
-            #plot error
-            iteration_array = [i*CHECK_EVERY for i in range(ii+1)]
-            plt.figure()
-            np.savez("losses_file.npz", )
-            plt.plot(iteration_array, variational_lower_bound_array, "b*-")
-            plt.plot(iteration_array, KL_term_array1, "co-")
-            plt.plot(iteration_array, log_likelihood_array1, "md-")
-            plt.legend(['Variational Lower Bound', 'KL divergence', 'Log Likelihood'], loc="best")
-            plt.title('Loss per iteration')
-            plt.savefig(save_name+"loss.png", format="png")
-            plt.close()
-    
-            # plot posterior predictive space
-            # Get fixed MNIST digits for plotting posterior means during training
-            #np_x_fixed = t_batch
-            #np_x_fixed = np_x_fixed.reshape(16, n_pixels)
-            #np_x_fixed = (np_x_fixed > 0.5).astype(np.float32)
-            #np_q_mu = sess.run(mu_1, {X: np_x_fixed})
-            #cmap = "gray_r"
-            #f, ax = plt.subplots(1, figsize=(6 * 1.1618, 6))
-            #im = ax.scatter(np_q_mu[:, 0], np_q_mu[:, 1], cmap=cmap, alpha=0.7)
-            #ax.set_xlabel('First dimension of sampled latent variable $z_1$')
-            #ax.set_ylabel('Second dimension of sampled latent variable mean $z_2$')
-            ##ax.set_xlim([-10., 10.])
-            ##ax.set_ylim([-10., 10.])
-            #f.colorbar(im, ax=ax, label='Digit class')
-            #plt.tight_layout()
-            #plt.savefig(save_name + '_posterior_predictive_map_frame_{}.png'.format(ii), format="png")
-            #plt.close()
-            
-            #nx = ny = 20
-            #x_values = np.linspace(-3, 3, nx)
-            #y_values = np.linspace(-3, 3, ny)
-            #canvas = np.empty((height * ny, width * nx))
-            #for ii, yi in enumerate(x_values):
-              #for j, xi in enumerate(y_values):
-                #np_z = np.expand_dims(np.append(np.ones((8)), np.array([[xi, yi]])), axis=0)
-                ##ipdb.set_trace()
-                #x_mean = sess.run(reconstruction, {z_2: np_z, X: np_x_fixed})
-                #canvas[(nx - ii - 1) * height:(nx - ii) * height,  j *
-                       #width:(j + 1) * width] = x_mean[0].reshape(height, width)
-            #plt.savefig(save_name + '_prior_predictive_map_frame_{}'.format(ii), format="png")   # canvas
-            #plt.close()
+                #plot error
+                #iteration_array = [i*CHECK_EVERY for i in range(batch+1)]
+                plt.figure()
+                #ipdb.set_trace()
+                np.savez("losses_file.npz", )
+                plt.plot(variational_lower_bound_array, "b*-")
+                plt.plot(KL_term_array1, "co-")
+                plt.plot(log_likelihood_array1, "md-")
+                plt.legend(['Variational Lower Bound', 'KL divergence', 'Log Likelihood'], loc="best")
+                plt.title('Loss per iteration')
+                plt.savefig(save_name+"loss{}.png".format(batch), format="png")
+                plt.close()
+        
+                # plot posterior predictive space
+                # Get fixed MNIST digits for plotting posterior means during training
+                #np_x_fixed = t_batch
+                #np_x_fixed = np_x_fixed.reshape(16, n_pixels)
+                #np_x_fixed = (np_x_fixed > 0.5).astype(np.float32)
+                #np_q_mu = sess.run(mu_1, {X: np_x_fixed})
+                #cmap = "gray_r"
+                #f, ax = plt.subplots(1, figsize=(6 * 1.1618, 6))
+                #im = ax.scatter(np_q_mu[:, 0], np_q_mu[:, 1], cmap=cmap, alpha=0.7)
+                #ax.set_xlabel('First dimension of sampled latent variable $z_1$')
+                #ax.set_ylabel('Second dimension of sampled latent variable mean $z_2$')
+                ##ax.set_xlim([-10., 10.])
+                ##ax.set_ylim([-10., 10.])
+                #f.colorbar(im, ax=ax, label='Digit class')
+                #plt.tight_layout()
+                #plt.savefig(save_name + '_posterior_predictive_map_frame_{}.png'.format(ii), format="png")
+                #plt.close()
+                
+                #nx = ny = 20
+                #x_values = np.linspace(-3, 3, nx)
+                #y_values = np.linspace(-3, 3, ny)
+                #canvas = np.empty((height * ny, width * nx))
+                #for ii, yi in enumerate(x_values):
+                  #for j, xi in enumerate(y_values):
+                    #np_z = np.expand_dims(np.append(np.ones((8)), np.array([[xi, yi]])), axis=0)
+                    ##ipdb.set_trace()
+                    #x_mean = sess.run(reconstruction, {z_2: np_z, X: np_x_fixed})
+                    #canvas[(nx - ii - 1) * height:(nx - ii) * height,  j *
+                           #width:(j + 1) * width] = x_mean[0].reshape(height, width)
+                #plt.savefig(save_name + '_prior_predictive_map_frame_{}'.format(ii), format="png")   # canvas
+                #plt.close()
 
-        # save check point every 500 epoch
-        if i % SAVE_EVERY == 0:
-            save(saver, sess, logdir, step)
-            last_saved_step = step
+            # save check point every 500 epoch
+            if batch % SAVE_EVERY == 0:
+                save(saver, sess, logdir, step)
+                last_saved_step = step
         #sess.reset(process_data, [image_batch, test_batch, samples_num])        
         coord.request_stop()
         coord.join(threads)
