@@ -37,7 +37,7 @@ SAVE_EVERY = 100
 PLOT_EVERY = 100
 slim = tf.contrib.slim    #for testing
 gen_eval_num = 20
-VERSION =  'FSD_pad'      #_masknewPokemonmnist_pmFSD_pretty_128'newspectrogram' 'OLLO_NO1'
+VERSION =  'FSD_pad_mask'      #newPokemonmnist_pmFSD_pretty_128'newspectrogram' 'OLLO_NO1'
 DATA_ROOT = 'training_data'
 LOGDIR_ROOT = 'model'
 DATESTRING = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.datetime.now())
@@ -265,65 +265,109 @@ def process_data():
     # parent = os.path.dirname(current_dir)
     pokemon_dir = os.path.join(current_dir, DATA_ROOT, VERSION)
     images = []
+    shapes = []
     for each in os.listdir(pokemon_dir):
         images.append(os.path.join(pokemon_dir, each))
+        # the saved image file is "*_128_84.jpg", the last two number is height and width
+        shape=(each.split('_')[-2], each.split('_')[-1].split('.')[-2])
+        shapes.append(shape)
     #  Save the last 16 images for validation
-    train_images = tf.convert_to_tensor(images[:-BATCH_SIZE] * EPOCHS, dtype = tf.string)
-    test_images = tf.convert_to_tensor(images[-BATCH_SIZE:] * EPOCHS, dtype = tf.string)
-    #ipdb.set_trace()
 
-    train_queue = tf.train.string_input_producer(train_images,
-                                                        num_epochs=None)
-    test_queue = tf.train.string_input_producer(test_images,
-                                                        num_epochs=None)
-    reader = tf.WholeFileReader()
-    train_key, train_content = reader.read(train_queue)
-    test_key, test_content = reader.read(test_queue)
+    def get_train_test_data(data, size, ifmask=True):
+        num_samples = len(size)
+        size = np.asarray(np.array(size), np.float32)
+        data = tf.convert_to_tensor(data, dtype = tf.string)
+        size = tf.convert_to_tensor(size, dtype=np.float32)
+        
+        #data_q = tf.train.slice_input_producer(data, shuffle=True)
+        data_q = tf.train.string_input_producer(data, shuffle=True)
+        
+        reader = tf.WholeFileReader()
+        key, content = reader.read(data_q)
+
+        image = tf.image.decode_jpeg(content, channels = CHANNEL)
+        image = tf.image.random_brightness(image, max_delta = 0.1)
+        image = tf.image.random_contrast(image, lower = 0.9, upper = 1.1)
+
+        SIZE = [HEIGHT, WIDTH]
+        image = tf.image.resize_images(image, SIZE)
+        image = tf.cast(image, tf.float32)
+        image = image / 255.0
+        ipdb.set_trace()
+        images_batch, img_size_batch = tf.train.shuffle_batch(
+                                    [image, size], batch_size = BATCH_SIZE,
+                                    num_threads = 4, capacity = 200 + 3* BATCH_SIZE, min_after_dequeue = 200) ##
+                                    
+        images_batch = tf.reshape(images_batch, [BATCH_SIZE, n_pixels])
+
+        return images_batch, img_size_batch, num_samples
     
-    train_img = tf.image.decode_png(train_content)
-    test_img = tf.image.decode_png(test_content)
+    train_images_batch, train_size_batch, train_num = get_train_test_data(images[:-BATCH_SIZE] * EPOCHS, shapes[:-BATCH_SIZE] * EPOCHS)
+    test_images_batch, test_size_batch, test_num = get_train_test_data(images[-BATCH_SIZE:] * EPOCHS, shapes[-BATCH_SIZE:] * EPOCHS)
+        
+
+    ipdb.set_trace()
+    #train_images = tf.convert_to_tensor(images[:-BATCH_SIZE] * EPOCHS, dtype = tf.string)
+    #train_shapes = tf.convert_to_tensor(shapes[:-BATCH_SIZE] * EPOCHS, dtype = tf.string)
+    
+    #test_images = tf.convert_to_tensor(images[-BATCH_SIZE:] * EPOCHS, dtype = tf.string)
+    #test_shapes = tf.convert_to_tensor(shapes[:-BATCH_SIZE] * EPOCHS, dtype = tf.string)
+
+    ##train_images, train_shapes = tf.train.slice_input_producer([train_images, train_shapes], shuffle=True)
+    
+
+    #train_queue = tf.train.string_input_producer(train_images,
+                                                        #num_epochs=None)
+    #test_queue = tf.train.string_input_producer(test_images,
+                                                        #num_epochs=None)
+    #reader = tf.WholeFileReader()
+    #train_key, train_content = reader.read(train_queue)
+    #test_key, test_content = reader.read(test_queue)
+    
+    #train_img = tf.image.decode_png(train_content)
+    #test_img = tf.image.decode_png(test_content)
     
     #content = tf.read_file(images_queue[0])
     #test_content = tf.read_file(test_images_queue[0])
-    #ipdb.set_trace()
-    train_image = tf.image.decode_jpeg(train_content, channels = CHANNEL)
-    train_image = tf.image.random_brightness(train_image, max_delta = 0.1)
-    train_image = tf.image.random_contrast(train_image, lower = 0.9, upper = 1.1)
+    ##ipdb.set_trace()
+    #train_image = tf.image.decode_jpeg(train_content, channels = CHANNEL)
+    #train_image = tf.image.random_brightness(train_image, max_delta = 0.1)
+    #train_image = tf.image.random_contrast(train_image, lower = 0.9, upper = 1.1)
     
-    test_image = tf.image.decode_jpeg(test_content, channels = CHANNEL)
-    test_image = tf.image.random_brightness(test_image, max_delta = 0.1)
-    test_image = tf.image.random_contrast(test_image, lower = 0.9, upper = 1.1)
-    # noise = tf.Variable(tf.truncated_normal(shape = [HEIGHT,WIDTH,CHANNEL], dtype = tf.float32, stddev = 1e-3, name = 'noise')) 
-    #size = [1, n_pixels]
-    size = [HEIGHT, WIDTH]
-    train_image = tf.image.resize_images(train_image, size)
-    test_image = tf.image.resize_images(test_image, size)
+    #test_image = tf.image.decode_jpeg(test_content, channels = CHANNEL)
+    #test_image = tf.image.random_brightness(test_image, max_delta = 0.1)
+    #test_image = tf.image.random_contrast(test_image, lower = 0.9, upper = 1.1)
+     ##########noise = tf.Variable(tf.truncated_normal(shape = [HEIGHT,WIDTH,CHANNEL], dtype = tf.float32, stddev = 1e-3, name = 'noise')) 
+    ##size = [1, n_pixels]
+    #size = [HEIGHT, WIDTH]
+    #train_image = tf.image.resize_images(train_image, size)
+    #test_image = tf.image.resize_images(test_image, size)
 
-    train_image = tf.cast(train_image, tf.float32)
-    train_image = train_image / 255.0
-    test_image = tf.cast(test_image, tf.float32)
-    test_image = test_image / 255.0
+    #train_image = tf.cast(train_image, tf.float32)
+    #train_image = train_image / 255.0
+    #test_image = tf.cast(test_image, tf.float32)
+    #test_image = test_image / 255.0
 
-    #spectro, magnit = tf.train.batch([spectro, magnit],
-                            #shapes=[(None, hp.n_mels*hp.r), (None, (1+hp.n_fft//2)*hp.r)],
-                            #num_threads=32,
-                            #batch_size=hp.batch_size, 
-                            #capacity=hp.batch_size*32,   
-                            #dynamic_pad=True)
+    ##spectro, magnit = tf.train.batch([spectro, magnit],
+                            ##shapes=[(None, hp.n_mels*hp.r), (None, (1+hp.n_fft//2)*hp.r)],
+                            ##num_threads=32,
+                            ##batch_size=hp.batch_size, 
+                            ##capacity=hp.batch_size*32,   
+                            ##dynamic_pad=True)
 
         
-    train_images_batch = tf.train.shuffle_batch(
-                                    [train_image], batch_size = BATCH_SIZE,
-                                    num_threads = 4, capacity = 200 + 3* BATCH_SIZE, min_after_dequeue = 200) #
-    test_images_batch = tf.train.shuffle_batch(
-                                    [test_image], batch_size = BATCH_SIZE,
-                                    num_threads = 4, capacity = 200 + 3* BATCH_SIZE,min_after_dequeue = 200)     #
-    num_images = len(images) * EPOCHS
+    #train_images_batch, shape = tf.train.shuffle_batch(
+                                    #[train_image, train_shapes], batch_size = BATCH_SIZE,
+                                    #num_threads = 4, capacity = 200 + 3* BATCH_SIZE, min_after_dequeue = 200) #
+    #test_images_batch = tf.train.shuffle_batch(
+                                    #[test_image], batch_size = BATCH_SIZE,
+                                    #num_threads = 4, capacity = 200 + 3* BATCH_SIZE,min_after_dequeue = 200)     #
+    #num_images = len(images) * EPOCHS
     #ipdb.set_trace()
-    train_images_batch = tf.reshape(train_images_batch, [BATCH_SIZE, n_pixels])
-    test_images_batch = tf.reshape(test_images_batch, [BATCH_SIZE, n_pixels])
+    #train_images_batch = tf.reshape(train_images_batch, [BATCH_SIZE, n_pixels])
+    #test_images_batch = tf.reshape(test_images_batch, [BATCH_SIZE, n_pixels])
 
-    return train_images_batch, test_images_batch, num_images
+    return train_images_batch, train_size_batch, test_images_batch, test_size_batch, train_num
 
 ############################ Encoder ############################
 
