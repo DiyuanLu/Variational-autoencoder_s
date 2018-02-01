@@ -10,14 +10,15 @@ from scipy.misc import imsave
 #from tensorflow.examples.tutorials.mnist import input_data    # DOWNLOAD DATA
 from tensorflow.contrib.learn.python.learn.datasets.mnist import read_data_sets    #read data
 import ipdb
-
+import datetime
 
 SAVE_EVERY = 20000
 plot_every = 5000
 version = "MNIST"
-logdir = "model/" + version 
-results_dir = "results/" + version
-data_dir = "/MNIST_data"
+datetime = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.datetime.now())
+logdir = "model/" + version + '/' + datetime
+results_dir = "results/" + version + '/' + datetime
+data_dir = "training_data/MNIST_data"
 n_pixels = 28 * 28
 
 # HyperParameters
@@ -116,47 +117,62 @@ def plot_prior(model_No):
 
 
 # layer 1
-W_enc = weight_variables([n_pixels, h_dim], "W_enc")
-b_enc = bias_variable([h_dim], "b_enc")
-# tanh - activation function        avoid vanishing gradient in generative models
-h_enc = tf.nn.tanh(FC_Layer(X, W_enc, b_enc))
+with tf.name_scope('Encoder'):
+    W_enc = weight_variables([n_pixels, h_dim], "W_enc")
+    b_enc = bias_variable([h_dim], "b_enc")
+    # tanh - activation function        avoid vanishing gradient in generative models
+    h_enc = tf.nn.tanh(FC_Layer(X, W_enc, b_enc))
 
-# layer 2   Output mean and std of the latent variable distribution
-W_mu = weight_variables([h_dim, latent_dim], "W_mu")
-b_mu = bias_variable([latent_dim], "b_mu")
-mu = FC_Layer(h_enc, W_mu, b_mu)
+    # layer 2   Output mean and std of the latent variable distribution
+    W_mu = weight_variables([h_dim, latent_dim], "W_mu")
+    b_mu = bias_variable([latent_dim], "b_mu")
+    mu = FC_Layer(h_enc, W_mu, b_mu)
 
-W_logstd = weight_variables([h_dim, latent_dim], "W_logstd")
-b_logstd = bias_variable([latent_dim], "b_logstd")
-logstd = FC_Layer(h_enc, W_logstd, b_logstd)
+    W_logstd = weight_variables([h_dim, latent_dim], "W_logstd")
+    b_logstd = bias_variable([latent_dim], "b_logstd")
+    logstd = FC_Layer(h_enc, W_logstd, b_logstd)
 
 
-# Reparameterize import Randomness
-noise = tf.random_normal([1, latent_dim])
-# z is the ultimate output(latent variable) of our Encoder
-z = mu + tf.multiply(noise, tf.exp(0.5*logstd))
+    # Reparameterize import Randomness
+    noise = tf.random_normal([1, latent_dim])
+    # z is the ultimate output(latent variable) of our Encoder
+    z = mu + tf.multiply(noise, tf.exp(0.5*logstd))
 
 ############################ Dencoder ############################
 # layer 1
-W_dec = weight_variables([latent_dim, h_dim], "W_dec")
-b_dec = bias_variable([h_dim], "b_dec")
-# tanh - decode the latent representation
-h_dec = tf.nn.tanh(FC_Layer(z, W_dec, b_dec))
+with tf.name_scope('Decoder'):
+    W_dec = weight_variables([latent_dim, h_dim], "W_dec")
+    b_dec = bias_variable([h_dim], "b_dec")
+    # tanh - decode the latent representation
+    h_dec = tf.nn.tanh(FC_Layer(z, W_dec, b_dec))
 
-# layer2 - reconstruction the image and output 0 or 1
-W_rec = weight_variables([h_dim, n_pixels], "W_dec")
-b_rec = bias_variable([n_pixels], "b_rec")
-# 784 bernoulli parameter Output
-reconstruction = tf.nn.sigmoid(FC_Layer(h_dec, W_rec, b_rec))
+    # layer2 - reconstruction the image and output 0 or 1
+    W_rec = weight_variables([h_dim, n_pixels], "W_dec")
+    b_rec = bias_variable([n_pixels], "b_rec")
+    # 784 bernoulli parameter Output
+    reconstruction = tf.nn.sigmoid(FC_Layer(h_dec, W_rec, b_rec))
 
 # Loss function = reconstruction error + regularization(similar image's latent representation close)
-log_likelihood = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
+with tf.name_scope('loss'):
+    log_likelihood = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
 
-KL_divergence = -0.5 * tf.reduce_sum(1 + 2*logstd - tf.pow(mu, 2) - tf.exp(2 * logstd), reduction_indices=1)
+    KL_divergence = -0.5 * tf.reduce_sum(1 + 2*logstd - tf.pow(mu, 2) - tf.exp(2 * logstd), reduction_indices=1)
 
-VAE_loss = tf.reduce_mean(log_likelihood + KL_divergence)
+    VAE_loss = tf.reduce_mean(log_likelihood + KL_divergence)
+    
+
+#Outputs a Summary protocol buffer containing a single scalar value.
+tf.summary.scalar('VAE_loss', VAE_loss)
+tf.summary.scalar('KL_divergence1', KL_divergence)
+tf.summary.scalar('log_likelihood1', log_likelihood)
+
 optimizer = tf.train.AdadeltaOptimizer().minimize(-VAE_loss)
 
+#################### Set up logging for TensorBoard.
+writer = tf.summary.FileWriter(logdir)
+writer.add_graph(tf.get_default_graph())
+run_metadata = tf.RunMetadata()
+summaries = tf.summary.merge_all()
 # Training
 #init all variables and start the session!
 init = tf.global_variables_initializer()
@@ -183,10 +199,13 @@ for i in range(num_iterations):
     if (i % recording_interval == 0):
         #every 1K iterations record these values
         vlb_eval = VAE_loss.eval(feed_dict={X: x_batch})
-        print "Iteration: {}, Loss: {}".format(i, vlb_eval)
+        
         variational_lower_bound_array.append(vlb_eval)
-        log_likelihood_array.append(np.mean(log_likelihood.eval(feed_dict={X: x_batch})))
-        KL_term_array.append(np.mean(KL_divergence.eval(feed_dict={X: x_batch})))
+        temp_log = np.mean(log_likelihood.eval(feed_dict={X: x_batch}))
+        log_likelihood_array.append(temp_log)
+        temp_KL = np.mean(KL_divergence.eval(feed_dict={X: x_batch}))
+        KL_term_array.append(temp_KL)
+        print "Iteration: {}, Loss: {}, log_likelihood: {}, KL_term{}".format(i, vlb_eval, temp_log, temp_KL )
 
     if (i % 10 == 0):
         if not os.path.exists(logdir):
@@ -198,15 +217,18 @@ for i in range(num_iterations):
         #plot_prior(model_No)
         plot_test(i, save_name=save_name)
         
+        plt.figure()
+        #for the number of iterations we had 
+        #plot these 3 terms
+        plt.plot(iteration_array, variational_lower_bound_array)
+        plt.plot(iteration_array, KL_term_array)
+        plt.plot(iteration_array, log_likelihood_array)
+        plt.legend(['Variational Lower Bound', 'KL divergence', 'Log Likelihood'], bbox_to_anchor=(1.05, 1), loc=2)
+        plt.title('Loss per iteration')
+        plt.savefig(save_name+"_iter{}_loss.png".format(i), format="png")
+        
 
-plt.figure()
-#for the number of iterations we had 
-#plot these 3 terms
-plt.plot(iteration_array, variational_lower_bound_array)
-plt.plot(iteration_array, KL_term_array)
-plt.plot(iteration_array, log_likelihood_array)
-plt.legend(['Variational Lower Bound', 'KL divergence', 'Log Likelihood'], bbox_to_anchor=(1.05, 1), loc=2)
-plt.title('Loss per iteration')
-plt.savefig(save_name+"loss.png", format="png")
 
+'''
+Iteration: 0, Loss: -122970.8125, log_likelihood: -120843.765625, KL_term213.671951294'''
 

@@ -4,48 +4,19 @@ import os
 import sys
 import tensorflow as tf
 import numpy as np
-import cv2
+#import cv2
 import random
 import scipy.misc
 from utils import *
-import datetime
+
 import ipdb
 import time
-import matplotlib
-matplotlib.use('Agg')
+#import matplotlib
+#matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import argparse
-#from tensorflow.examples.tutorials.mnist import input_data
-#will ensure that the correct data has been downloaded to your
-#local training folder and then unpack that data to return a dictionary of DataSet instances.
-#mnist = input_data.read_data_sets("MNIST_data/")
-
-
-BATCH_SIZE = 100
-RANDOM_DIM = 100
-HEIGHT, WIDTH, CHANNEL, n_pixels = 128, 128, 1, 128 * 128
-CHECKPOINT_EVERY = 100   #
-EPOCHS = int(1e3)+1   # int(1e5)
-LEARNING_RATE = 1e-3
-
-L2_REGULARIZATION_STRENGTH = 0
-SILENCE_THRESHOLD = 0.1    # 0.3
-MAX_TO_KEEP = 20
-METADATA = False
-CHECK_EVERY = 100
-SAVE_EVERY = 100
-PLOT_EVERY = 100
-slim = tf.contrib.slim    #for testing
-gen_eval_num = 20
-VERSION =  'FSD_pad_mask'      #newPokemonmnist_pmFSD_pretty_128'newspectrogram' 'OLLO_NO1'
-DATA_ROOT = 'training_data'
-LOGDIR_ROOT = 'model'
-DATESTRING = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.datetime.now())
-RESULT_DIR_ROOT = 'results'
-latent_dim_1 = 100
-h_dim_1 = 500  # size of network
-latent_dim_2 = 10
-h_dim_2 = 100  # size of network
+from audio_load import get_batch
+from audio_hyperparams import Hyperparams as hp
 
 
 def get_arguments():
@@ -57,14 +28,15 @@ def get_arguments():
         return {'true': True, 'false': False}[s.lower()]
 
     parser = argparse.ArgumentParser(description='WaveNet example network')
-    parser.add_argument('--version', type=str, default=VERSION,
+    parser.add_argument('--version', type=str, default=hp.VERSION,
                         help='The training data group')
-
-    parser.add_argument('--store_metadata', type=bool, default=METADATA,
-                        help='Whether to store advanced debugging information '
-                        '(execution time, memory consumption) for use with '
-                        'TensorBoard. Default: ' + str(METADATA) + '.')
     parser.add_argument('--logdir', type=str, default=None,
+                        help='Directory in which to store the logging '
+                        'information for TensorBoard. '
+                        'If the model already exists, it will restore '
+                        'the state and will continue training. '
+                        'Cannot use with --logdir_root and --restore_from.')
+    parser.add_argument('--logdir_root', type=str, default=None,
                         help='Directory in which to store the logging '
                         'information for TensorBoard. '
                         'If the model already exists, it will restore '
@@ -75,47 +47,9 @@ def get_arguments():
                         'This creates the new model under the dated directory '
                         'in --logdir_root. '
                         'Cannot use with --logdir.')
-    parser.add_argument('--checkpoint_every', type=int,
-                        default=CHECKPOINT_EVERY,
-                        help='How many steps to save each checkpoint after. Default: ' + str(CHECKPOINT_EVERY) + '.')
-    parser.add_argument('--epochs', type=int, default=EPOCHS,
-                        help='Number of training steps. Default: ' + str(EPOCHS) + '.')
-    #parser.add_argument('--sample_size', type=int, default=SAMPLE_SIZE,
-                        #help='Concatenate and cut audio samples to this many '
-                        #'samples. Default: ' + str(SAMPLE_SIZE) + '.')
-    parser.add_argument('--silence_threshold', type=float,
-                        default=SILENCE_THRESHOLD,
-                        help='Volume threshold below which to trim the start '
-                        'and the end from the training set samples. Default: ' + str(SILENCE_THRESHOLD) + '.')
-    parser.add_argument('--max_checkpoints', type=int, default=MAX_TO_KEEP,
-                        help='Maximum amount of checkpoints that will be kept alive. Default: '
-                             + str(MAX_TO_KEEP) + '.')
+
     return parser.parse_args()
 
-#def open_sess(args):
-    #sess = tf.Session()
-    #saver = tf.train.Saver(max_to_keep=20)
-    #sess.run(tf.global_variables_initializer())
-    #sess.run(tf.local_variables_initializer())
-    ##ipdb.set_trace()
-    ###################### Saver for storing checkpoints of the model.
-    #saver = tf.train.Saver(max_to_keep=args.max_checkpoints)
-    #try:
-        #print(args.restore_from)
-        #saved_global_step = load(saver, sess, args.restore_from)
-        #if is_overwritten_training or saved_global_step is None:
-            ## The first training step will be saved_global_step + 1,
-            ## therefore we put -1 here for new or overwritten trainings.
-            #saved_global_step = -1
-    #except:
-        #print("Something went wrong while restoring checkpoint. "
-              #"We will terminate training to avoid accidentally overwriting "
-              #"the previous model.")
-        #raise
-    #coord = tf.train.Coordinator()
-    #threads = tf.train.start_queue_runners(sess=sess, coord=coord)
-
-    #return saved_global_step
 
 def save(saver, sess, logdir, step):
     model_name = 'model.ckpt'
@@ -149,7 +83,7 @@ def load(saver, sess, logdir):
         return None
 
 def get_default_logdir(dir_root, version):
-    train_dir = os.path.join(dir_root, version, DATESTRING)
+    train_dir = os.path.join(dir_root, version, hp.DATESTRING)
     if not os.path.exists(train_dir):
         os.makedirs(train_dir)
     print('Using and make default dir: {}'.format(train_dir))
@@ -158,7 +92,7 @@ def get_default_logdir(dir_root, version):
 def validate_directories(args):
     """Validate and arrange directory related arguments."""
 
-    # Validation
+    ## Validation
     if args.logdir and args.logdir_root:
         raise ValueError("--logdir and --logdir_root cannot be "
                          "specified at the same time.")
@@ -174,12 +108,12 @@ def validate_directories(args):
             "checkpoint.")
 
     # Arrangement
-    logdir_root = LOGDIR_ROOT
-    result_root = RESULT_DIR_ROOT
+    logdir_root = hp.LOGDIR_ROOT
+    result_root = hp.RESULT_DIR_ROOT
 
     version = args.version
     if version is None:
-        version = VERSION
+        version = hp.VERSION
         
     logdir = args.logdir
     if logdir is None:
@@ -196,7 +130,7 @@ def validate_directories(args):
     result_dir = get_default_logdir(result_root, version)
     print('Saving plots to default: {}'.format(result_dir))
     
-    data_dir = os.path.join(DATA_ROOT, version)
+    data_dir = os.path.join(hp.DATA_ROOT, version)
     print('Using default data: {}'.format(data_dir))
         
     return {
@@ -217,24 +151,43 @@ def bias_variable(shape, name):
     initial = tf.truncated_normal(shape, stddev=0.1)
     return tf.Variable(initial, name=name)
 
-def FC_Layer(X, W, b):
-    return tf.matmul(X, W) + b
+#def FC_Layer(X, W, b):
+    #return tf.matmul(X, W) + b
 
-def plot_test(sess, nodel_no, test_data, load_model = False, save_name="save"):
+def plot_test(sess, model_no, mu, sigma, load_model = False, save_name="save"):
     # Here, we plot the reconstructed image on test set images.
     if load_model:
         saver.restore(sess, os.path.join(os.getcwd(), logdir + '/' + "{}".format(model_No)))
 
-    num_pairs = 10
+    num_pairs = 16
     image_indices = np.random.randint(0, 200, num_pairs)
     #Lets plot 10 digits
-    
-    x = test_data
+    #mu = sess.run(mu_1)
+    #sigma = sess.run(sigma_1)
+    noise = tf.random_normal([1, hp.latent_dim_1])
+    max_len = np.max((mu.shape[1], sigma.shape[1]))
+    pad_mu = tf.pad(mu, [[0, 0], [0, max_len-mu.shape[1]], [0, 0]], 'CONSTANT')
+    pad_sigma = tf.pad(mu, [[0, 0], [0, max_len-mu.shape[1]], [0, 0]], 'CONSTANT')
+    # z_1 is the fisrt leverl output(latent variable) of our Encoder
+    z = pad_mu + tf.multiply(noise, tf.exp(0.5*pad_sigma))
+    z = sess.run(z)
     for pair in range(num_pairs):
         #reshaping to show original test image
-        x_image = x[pair, :]
+        x_image = z[pair, :128, :].T
+
+        fig = plt.figure(frameon=False)
+        ax = plt.Axes(fig, [0., 0., 1., 1.])
+        ax.set_axis_off()
+        fig.add_axes(ax)
+        ax1 = plt.subplot(4,4,index - 1)
+        ax1.matshow(x_image, interpolation='nearest',aspect='auto',cmap="gray_r",origin='lower')
+        fig.savefig(save_name + "_iter{}_samples.png".format(model_no), format="jpg")
+        plt.close()
+
+
+    
         index = (1 + pair) * 2
-        ax1 = plt.subplot(5,4,index - 1)  # arrange in 5*4 layout
+        ax1 = plt.subplot(4,4,index - 1)  # arrange in 5*4 layout
         plt.imshow(np.reshape(x_image, (HEIGHT, WIDTH)), cmap="gray_r", aspect="auto")
         if pair == 0 or pair == 1:
             plt.title("Original")
@@ -260,114 +213,6 @@ def plot_test(sess, nodel_no, test_data, load_model = False, save_name="save"):
     plt.savefig(save_name + "samples.png", format="png")
     plt.close()
     
-def process_data():   
-    current_dir = os.getcwd()
-    # parent = os.path.dirname(current_dir)
-    pokemon_dir = os.path.join(current_dir, DATA_ROOT, VERSION)
-    images = []
-    shapes = []
-    for each in os.listdir(pokemon_dir):
-        images.append(os.path.join(pokemon_dir, each))
-        # the saved image file is "*_128_84.jpg", the last two number is height and width
-        shape=(each.split('_')[-2], each.split('_')[-1].split('.')[-2])
-        shapes.append(shape)
-    #  Save the last 16 images for validation
-
-    def get_train_test_data(data, size, ifmask=True):
-        num_samples = len(size)
-        size = np.asarray(np.array(size), np.float32)
-        data = tf.convert_to_tensor(data, dtype = tf.string)
-        size = tf.convert_to_tensor(size, dtype=np.float32)
-        
-        #data_q = tf.train.slice_input_producer(data, shuffle=True)
-        data_q = tf.train.string_input_producer(data, shuffle=True)
-        
-        reader = tf.WholeFileReader()
-        key, content = reader.read(data_q)
-
-        image = tf.image.decode_jpeg(content, channels = CHANNEL)
-        image = tf.image.random_brightness(image, max_delta = 0.1)
-        image = tf.image.random_contrast(image, lower = 0.9, upper = 1.1)
-
-        SIZE = [HEIGHT, WIDTH]
-        image = tf.image.resize_images(image, SIZE)
-        image = tf.cast(image, tf.float32)
-        image = image / 255.0
-        ipdb.set_trace()
-        images_batch, img_size_batch = tf.train.shuffle_batch(
-                                    [image, size], batch_size = BATCH_SIZE,
-                                    num_threads = 4, capacity = 200 + 3* BATCH_SIZE, min_after_dequeue = 200) ##
-                                    
-        images_batch = tf.reshape(images_batch, [BATCH_SIZE, n_pixels])
-
-        return images_batch, img_size_batch, num_samples
-    
-    train_images_batch, train_size_batch, train_num = get_train_test_data(images[:-BATCH_SIZE] * EPOCHS, shapes[:-BATCH_SIZE] * EPOCHS)
-    test_images_batch, test_size_batch, test_num = get_train_test_data(images[-BATCH_SIZE:] * EPOCHS, shapes[-BATCH_SIZE:] * EPOCHS)
-        
-
-    ipdb.set_trace()
-    #train_images = tf.convert_to_tensor(images[:-BATCH_SIZE] * EPOCHS, dtype = tf.string)
-    #train_shapes = tf.convert_to_tensor(shapes[:-BATCH_SIZE] * EPOCHS, dtype = tf.string)
-    
-    #test_images = tf.convert_to_tensor(images[-BATCH_SIZE:] * EPOCHS, dtype = tf.string)
-    #test_shapes = tf.convert_to_tensor(shapes[:-BATCH_SIZE] * EPOCHS, dtype = tf.string)
-
-    ##train_images, train_shapes = tf.train.slice_input_producer([train_images, train_shapes], shuffle=True)
-    
-
-    #train_queue = tf.train.string_input_producer(train_images,
-                                                        #num_epochs=None)
-    #test_queue = tf.train.string_input_producer(test_images,
-                                                        #num_epochs=None)
-    #reader = tf.WholeFileReader()
-    #train_key, train_content = reader.read(train_queue)
-    #test_key, test_content = reader.read(test_queue)
-    
-    #train_img = tf.image.decode_png(train_content)
-    #test_img = tf.image.decode_png(test_content)
-    
-    #content = tf.read_file(images_queue[0])
-    #test_content = tf.read_file(test_images_queue[0])
-    ##ipdb.set_trace()
-    #train_image = tf.image.decode_jpeg(train_content, channels = CHANNEL)
-    #train_image = tf.image.random_brightness(train_image, max_delta = 0.1)
-    #train_image = tf.image.random_contrast(train_image, lower = 0.9, upper = 1.1)
-    
-    #test_image = tf.image.decode_jpeg(test_content, channels = CHANNEL)
-    #test_image = tf.image.random_brightness(test_image, max_delta = 0.1)
-    #test_image = tf.image.random_contrast(test_image, lower = 0.9, upper = 1.1)
-     ##########noise = tf.Variable(tf.truncated_normal(shape = [HEIGHT,WIDTH,CHANNEL], dtype = tf.float32, stddev = 1e-3, name = 'noise')) 
-    ##size = [1, n_pixels]
-    #size = [HEIGHT, WIDTH]
-    #train_image = tf.image.resize_images(train_image, size)
-    #test_image = tf.image.resize_images(test_image, size)
-
-    #train_image = tf.cast(train_image, tf.float32)
-    #train_image = train_image / 255.0
-    #test_image = tf.cast(test_image, tf.float32)
-    #test_image = test_image / 255.0
-
-    ##spectro, magnit = tf.train.batch([spectro, magnit],
-                            ##shapes=[(None, hp.n_mels*hp.r), (None, (1+hp.n_fft//2)*hp.r)],
-                            ##num_threads=32,
-                            ##batch_size=hp.batch_size, 
-                            ##capacity=hp.batch_size*32,   
-                            ##dynamic_pad=True)
-
-        
-    #train_images_batch, shape = tf.train.shuffle_batch(
-                                    #[train_image, train_shapes], batch_size = BATCH_SIZE,
-                                    #num_threads = 4, capacity = 200 + 3* BATCH_SIZE, min_after_dequeue = 200) #
-    #test_images_batch = tf.train.shuffle_batch(
-                                    #[test_image], batch_size = BATCH_SIZE,
-                                    #num_threads = 4, capacity = 200 + 3* BATCH_SIZE,min_after_dequeue = 200)     #
-    #num_images = len(images) * EPOCHS
-    #ipdb.set_trace()
-    #train_images_batch = tf.reshape(train_images_batch, [BATCH_SIZE, n_pixels])
-    #test_images_batch = tf.reshape(test_images_batch, [BATCH_SIZE, n_pixels])
-
-    return train_images_batch, train_size_batch, test_images_batch, test_size_batch, train_num
 
 ############################ Encoder ############################
 
@@ -381,46 +226,90 @@ Returns:
 mu: Mean parameters for the variational family Normal
 sigma: Standard deviation parameters for the variational family Normal
 """
-X = tf.placeholder(tf.float32, shape=([None, n_pixels]))
-# layer 1
-W_enc_1 = weight_variables([n_pixels, h_dim_1], "W_enc_1")
-b_enc_1 = bias_variable([h_dim_1], "b_enc_1")
-# tanh - activation function        avoid vanishing gradient in generative models
-h_enc_1 = tf.nn.tanh(FC_Layer(X, W_enc_1, b_enc_1))
+def encoder(encoder_inputs, is_training=True, scope="encoder", reuse=None):
+    '''
+    Param:
+        encoder_inputs:A 2d tensor with shape of [N, T], dtype of int32. N: batch_size  T: real length
+        latent_dim:
+        h_dim
+        '''
+    with tf.variable_scope(scope, reuse=reuse):
+        # layer 1
+        #W_enc_1 = weight_variables([n_pixels, h_dim_1], "W_enc_1")
+        #b_enc_1 = bias_variable([h_dim_1], "b_enc_1")
+        ## tanh - activation function        avoid vanishing gradient in generative models
+        #h_enc_1 = tf.nn.tanh(FC_Layer(encoder_inputs, W_enc_1, b_enc_1))
+    
+        h_enc_1 = tf.contrib.layers.fully_connected(
+                                encoder_inputs,
+                                hp.h_dim_1,
+                                activation_fn=tf.nn.tanh,
+                                biases_initializer=tf.zeros_initializer(),
+                                reuse=reuse,
+                                scope="encode_lay1")
+        # layer 2   Output mean and std of the latent variable distribution
+        #W_mu_1 = weight_variables([h_dim_1, latent_dim_1], "W_mu_1")
+        #b_mu_1 = bias_variable([latent_dim_1], "b_mu_1")
+        #mu_1 = FC_Layer(h_enc_1, W_mu_1, b_mu_1)
+        mu_1 = tf.contrib.layers.fully_connected(
+                                h_enc_1,
+                                hp.latent_dim_1,
+                                activation_fn=tf.identity,
+                                biases_initializer=tf.zeros_initializer(),
+                                scope="en_mu_1")
 
-# layer 2   Output mean and std of the latent variable distribution
-W_mu_1 = weight_variables([h_dim_1, latent_dim_1], "W_mu_1")
-b_mu_1 = bias_variable([latent_dim_1], "b_mu_1")
-mu_1 = FC_Layer(h_enc_1, W_mu_1, b_mu_1)
+        #W_sigma_1 = weight_variables([h_dim_1, latent_dim_1], "W_sigma_1")
+        #b_sigma_1 = bias_variable([latent_dim_1], "b_sigma_1")
+        #sigma_1 = FC_Layer(h_enc_1, W_sigma_1, b_sigma_1)
+        sigma_1 = tf.contrib.layers.fully_connected(
+                                h_enc_1,
+                                hp.latent_dim_1,
+                                activation_fn=tf.identity,
+                                biases_initializer=tf.zeros_initializer(),
+                                scope="en_sigma_1")
+        # Reparameterize import Randomness
+        noise = tf.random_normal([1, hp.latent_dim_1])
+        # z_1 is the fisrt leverl output(latent variable) of our Encoder
+        z_1 = mu_1 + tf.multiply(noise, tf.exp(0.5*sigma_1))
 
-W_logstd_1 = weight_variables([h_dim_1, latent_dim_1], "W_logstd_1")
-b_logstd_1 = bias_variable([latent_dim_1], "b_logstd_1")
-logstd_1 = FC_Layer(h_enc_1, W_logstd_1, b_logstd_1)
+        ## second level---------------------------- layer 1
+        ##W_enc_2 = weight_variables([latent_dim_1, h_dim_2], "W_enc_2")
+        ##b_enc_2 = bias_variable([h_dim_2], "b_enc_2")
+        ### tanh - activation function        avoid vanishing gradient in generative models
+        ##h_enc_2 = tf.nn.tanh(FC_Layer(z_1, W_enc_2, b_enc_2))
+        #h_enc_2 = tf.contrib.layers.fully_connected(
+                                #z_1,
+                                #hp.h_dim_2,
+                                #activation_fn=tf.nn.tanh,
+                                #biases_initializer=tf.truncated_normal(hp.h_dim_2, stddev=0.1),
+                                #name="encode_lay2")
+        ## layer 2   Output mean and std of the latent variable distribution
+        ##W_mu_2 = weight_variables([h_dim_2, latent_dim_2], "W_mu_2")
+        ##b_mu_2 = bias_variable([latent_dim_2], "b_mu_2")
+        ##mu_2 = FC_Layer(h_enc_2, W_mu_2, b_mu_2)
+        #mu_2 = tf.contrib.layers.fully_connected(
+                                #h_enc_2,
+                                #hp.latent_dim_2,
+                                #activation_fn=tf.identity,
+                                #biases_initializer=tf.truncated_normal(hp.latent_dim_2, stddev=0.1),
+                                #name="en_mu_2")
 
-# Reparameterize import Randomness
-noise = tf.random_normal([1, latent_dim_1])
-# z_1 is the fisrt leverl output(latent variable) of our Encoder
-z_1 = mu_1 + tf.multiply(noise, tf.exp(0.5*logstd_1))
+        ##W_sigma_2 = weight_variables([h_dim_2, latent_dim_2], "W_sigma_2")
+        ##b_sigma_2 = bias_variable([latent_dim_2], "b_sigma_2")
+        ##sigma_2 = FC_Layer(h_enc_2, W_sigma_2, b_sigma_2)
+        #sigma_2 = tf.contrib.layers.fully_connected(
+                                #h_enc_2,
+                                #hp.latent_dim_2,
+                                #activation_fn=tf.identity,
+                                #biases_initializer=tf.truncated_normal(hp.latent_dim_2, stddev=0.1),
+                                #name="en_sigma_2")
+        ## Reparameterize import Randomness
+        #noise_2 = tf.random_normal([1, hp.latent_dim_2])
+        ## z_1 is the ultimate output(latent variable) of our Encoder
+        #z_2 = mu_2 + tf.multiply(noise_2, tf.exp(0.5*sigma_2))
 
-# second level---------------------------- layer 1
-W_enc_2 = weight_variables([latent_dim_1, h_dim_2], "W_enc_2")
-b_enc_2 = bias_variable([h_dim_2], "b_enc_2")
-# tanh - activation function        avoid vanishing gradient in generative models
-h_enc_2 = tf.nn.tanh(FC_Layer(z_1, W_enc_2, b_enc_2))
-
-# layer 2   Output mean and std of the latent variable distribution
-W_mu_2 = weight_variables([h_dim_2, latent_dim_2], "W_mu_2")
-b_mu_2 = bias_variable([latent_dim_2], "b_mu_2")
-mu_2 = FC_Layer(h_enc_2, W_mu_2, b_mu_2)
-
-W_logstd_2 = weight_variables([h_dim_2, latent_dim_2], "W_logstd_2")
-b_logstd_2 = bias_variable([latent_dim_2], "b_logstd_2")
-logstd_2 = FC_Layer(h_enc_2, W_logstd_2, b_logstd_2)
-
-# Reparameterize import Randomness
-noise_2 = tf.random_normal([1, latent_dim_2])
-# z_1 is the ultimate output(latent variable) of our Encoder
-z_2 = mu_2 + tf.multiply(noise_2, tf.exp(0.5*logstd_2))
+        #return mu_1, sigma_1, mu_2, sigma_2, z_2
+        return mu_1, sigma_1, z_1
 
 ############################ Dencoder ############################
 """Build a generative network parametrizing the likelihood of the data
@@ -430,37 +319,67 @@ hidden_size: Size of the hidden state of the neural net
 Returns:
 bernoulli_logits: logits for the Bernoulli likelihood of the data
 """
-# layer 1
-W_dec_2 = weight_variables([latent_dim_2, h_dim_2], "W_dec_2")
-b_dec_2 = bias_variable([h_dim_2], "b_dec_2")
-# tanh - decode the latent representation
-h_dec_2 = tf.nn.tanh(FC_Layer(z_2, W_dec_2, b_dec_2))
+def decoder(decoder_input, is_training=True, scope="encoder", reuse=None):
+    # layer 1
+    #W_dec_2 = weight_variables([latent_dim_2, h_dim_2], "W_dec_2")
+    #b_dec_2 = bias_variable([h_dim_2], "b_dec_2")
+    ## tanh - decode the latent representation
+    #h_dec_2 = tf.nn.tanh(FC_Layer(decoder_input, W_dec_2, b_dec_2))
+    with tf.variable_scope(scope, reuse=reuse):
+        #h_dec_2 = tf.contrib.layers.fully_connected(
+                                    #decoder_input,
+                                    #hp.h_dim_2,
+                                    #activation_fn=tf.nn.tanh,
+                                    #biases_initializer=tf.truncated_normal(hp.h_dim_2, stddev=0.1),
+                                    #name="dec_lay2")
 
-# layer2 - reconstruction the first leverl latent variables
-W_rec_2 = weight_variables([h_dim_2, latent_dim_1], "W_dec_2")
-b_rec_2 = bias_variable([latent_dim_1], "b_rec_2")
-recon_z1 = tf.nn.sigmoid(FC_Layer(h_dec_2, W_rec_2, b_rec_2)) # ?????
+        ## layer2 - reconstruction the first leverl latent variables
+        ##W_rec_2 = weight_variables([h_dim_2, latent_dim_1], "W_dec_2")
+        ##b_rec_2 = bias_variable([latent_dim_1], "b_rec_2")
+        ##recon_z1 = tf.nn.sigmoid(FC_Layer(h_dec_2, W_rec_2, b_rec_2)) # ?????
+        #recon_z1 = tf.contrib.layers.fully_connected(
+                                    #h_dec_2,
+                                    #hp.latent_dim_1,
+                                    #activation_fn=tf.nn.sigmoid,
+                                    #biases_initializer=tf.truncated_normal(hp.latent_dim_1, stddev=0.1),
+                                    #name="recon_z1")
 
-# layer 1
-W_dec_1 = weight_variables([latent_dim_1, h_dim_1], "W_dec")
-b_dec_1 = bias_variable([h_dim_1], "b_dec")
-# tanh - decode the latent representation
+        ## layer 1
+        ##W_dec_1 = weight_variables([latent_dim_1, h_dim_1], "W_dec")
+        ##b_dec_1 = bias_variable([h_dim_1], "b_dec")
+        ### tanh - decode the latent representation
 
-#ipdb.set_trace()
-residual_z1 = tf.identity(z_1) + recon_z1
-h_dec_1 = tf.nn.tanh(FC_Layer(residual_z1 , W_dec_1, b_dec_1))
+        ###ipdb.set_trace()
+        #noise = tf.random_normal([1, hp.latent_dim_1])
+        ## z_1 is the fisrt leverl output(latent variable) of our Encoder
+        #z_1 = mu_1 + tf.multiply(noise, tf.exp(0.5*sigma_1))
+        #residual_z1 = tf.identity(z_1) + recon_z1
+        #h_dec_1 = tf.nn.tanh(FC_Layer(residual_z1 , W_dec_1, b_dec_1))
+        h_dec_1 = tf.contrib.layers.fully_connected(
+                                    decoder_input,
+                                    hp.h_dim_1,
+                                    activation_fn=tf.nn.tanh,
+                                    biases_initializer=tf.zeros_initializer(),
+                                    scope="dec_lay1")
+        # layer2 - reconstruction the image and output 0 or 1
+        #W_rec_1 = weight_variables([h_dim_1, n_pixels], "W_rec_1")
+        #b_rec_1 = bias_variable([n_pixels], "b_rec_1")
+        ## 784 bernoulli parameter Output
+        #reconstruction = tf.nn.sigmoid(FC_Layer(h_dec_1, W_rec_1, b_rec_1))
+        reconstruction = tf.contrib.layers.fully_connected(
+                                    h_dec_1,
+                                    hp.n_mels*hp.r,
+                                    activation_fn=tf.nn.sigmoid,
+                                    biases_initializer=tf.zeros_initializer(),
+                                    scope="reconstruction")
 
-# layer2 - reconstruction the image and output 0 or 1
-W_rec_1 = weight_variables([h_dim_1, n_pixels], "W_rec_1")
-b_rec_1 = bias_variable([n_pixels], "b_rec_1")
-# 784 bernoulli parameter Output
-reconstruction = tf.nn.sigmoid(FC_Layer(h_dec_1, W_rec_1, b_rec_1))
+        return reconstruction
 
 def train():
-    random_dim = RANDOM_DIM
 
     ################### Get parameters
     args = get_arguments()
+
     try:
         directories = validate_directories(args)
     except ValueError as e:
@@ -472,28 +391,42 @@ def train():
     restore_from = directories['restore_from']
     result_dir = directories['result_dir']
     data_dir = directories['data_dir']
-    #x_placeholder = tf.placeholder("float", shape = [None,28,28,1], name='x_placeholder')
     
     # Even if we restored the model, we will treat it as new training
     # if the trained model is written into an arbitrary location.
     is_overwritten_training = logdir != restore_from
 
     ################### define graph
-    with tf.variable_scope('input'):
+    with tf.name_scope('create_inputs'):
+        '''################### load data ################'''
         #real and fake image placholders
-        real_image = tf.placeholder(tf.float32, shape = [None, n_pixels, CHANNEL], name='real_image')
-        #real_image = mnist.train.next_batch(BATCH_SIZE)[0].reshape([BATCH_SIZE, 28, 28, 1])
-        random_input = tf.placeholder(tf.float32, shape=[None, random_dim], name='rand_input')
+        encoder_inputs = tf.placeholder(tf.float32, shape = [None, None, hp.n_mels*hp.r], name='encoder_inputs')
+        #random_input = tf.placeholder(tf.float32, shape=[None, random_dim], name='rand_input')
+        decoder_input = tf.placeholder(tf.float32, shape = [None, hp.latent_dim_1], name='encoder_inputs')
         is_train = tf.placeholder(tf.bool, name='is_train')
 
-    # #### Loss
-    #mask = 
-    #X *=
-    log_likelihood1 = tf.reduce_sum(X * tf.log(reconstruction + 1e-9) + (1 - X) * tf.log(1 - reconstruction + 1e-9))
-    
-    KL_divergence1 = -0.5 * tf.reduce_sum(1 + 2*logstd_2 - tf.pow(mu_2, 2) - tf.exp(2 * logstd_2), reduction_indices=1)
-    
-    VAE_loss = tf.reduce_mean(log_likelihood1 - KL_divergence1)
+        spectro, magnit, length, num_batch = get_batch(is_training = True)   
+        
+        batch_num = int(num_batch / hp.batch_size)
+        
+
+    with tf.name_scope('VAE'):
+        ##### encoder
+        mu_1, sigma_1, z_1 = encoder(spectro)
+
+        ##### decoder
+        reconstruction = decoder(z_1)
+
+    ##### Loss
+    with tf.name_scope('loss'):
+        log_likelihood1 = tf.reduce_sum(spectro * tf.log(reconstruction + 1e-9) + (1 - spectro) * tf.log(1 - reconstruction + 1e-9))
+        
+        KL_divergence1 = -0.5 * tf.reduce_sum(1 + 2*sigma_1 - tf.pow(mu_1, 2) - tf.exp(2 * sigma_1), reduction_indices=1)
+        
+        VAE_loss = tf.reduce_mean(log_likelihood1 - KL_divergence1)
+
+        #if hp.target_masking:
+            
 
     #Outputs a Summary protocol buffer containing a single scalar value.
     tf.summary.scalar('VAE_loss', VAE_loss)
@@ -509,10 +442,7 @@ def train():
     run_metadata = tf.RunMetadata()
     summaries = tf.summary.merge_all()
 
-    ################################### load data
-    batch_size = BATCH_SIZE
-    image_batch, test_batch, samples_num = process_data()   # ?????????????
-    batch_num = int(samples_num / batch_size)
+    
     
     ##################### Set up session and check the glabal save steps
     #saved_global_step = open_sess(args)
@@ -522,7 +452,8 @@ def train():
     sess.run(tf.local_variables_initializer())
     #ipdb.set_trace()
     ##################### Saver for storing checkpoints of the model.
-    saver = tf.train.Saver(max_to_keep=args.max_checkpoints)
+    saver = tf.train.Saver(max_to_keep=hp.MAX_TO_KEEP)
+    
     try:
         print(args.restore_from)
         saved_global_step = load(saver, sess, restore_from)
@@ -544,40 +475,40 @@ def train():
     step = None
     print("last_saved_step: ", last_saved_step)
     variational_lower_bound_array = []
-    log_likelihood_array1 = []
-    log_likelihood_array2 = []
-    KL_term_array1 = []
-    KL_term_array2 = []
-    iteration_array = [i*CHECK_EVERY for i in range(EPOCHS/CHECK_EVERY)]
-    for ii in range(saved_global_step + 1, EPOCHS):
+    log_likelihood_array = []
+    KL_term_array = []
+
+    iteration_array = [i*hp.CHECK_EVERY for i in range(hp.EPOCHS/hp.CHECK_EVERY)]
+    for ii in range(saved_global_step + 1, hp.EPOCHS):
         t1 = time.time()
-        
+
         # load training batch
         for batch in range(batch_num):
-            save_name = result_dir + '/' + "VAE_FSD_PAD_step{}_".format(batch)
+            save_name = result_dir + '/' + hp.VERSION + "_step{}_".format(batch)
             if batch % 100 == 0:
                 print "batch", batch
-            x_batch = sess.run(image_batch)
-            t_batch = sess.run(test_batch)
-            
-            #run our optimizer on our data
-            sess.run(optimizer, feed_dict={X: x_batch})
+            spectro, magnit, length = sess.run([spectro, magnit, length])
 
-            if (batch % BATCH_SIZE == 0):
-                #every 1K iterations record these values
-                vlb_eval = VAE_loss.eval(session=sess, feed_dict={X: x_batch})
-                print "Iteration: {}, Loss: {}".format(ii, vlb_eval)
-                variational_lower_bound_array.append(vlb_eval)
-                log_likelihood_array1.append(np.mean(log_likelihood1.eval(session=sess, feed_dict={X: x_batch})))
-                KL_term_array1.append(np.mean(KL_divergence1.eval(session=sess, feed_dict={X: x_batch})))
-            #log_likelihood_array2.append(np.mean(log_likelihood1.eval(feed_dict={X: x_batch})))
-            #KL_term_array2.append(np.mean(KL_divergence2.eval(feed_dict={X: x_batch})))
-        
+            #run our optimizer on our data
+            sess.run(optimizer, feed_dict={encoder_inputs: spectro})
             
-            if (batch % CHECK_EVERY == 0):
+            if (batch % 2 == 0):
+                vlb_eval = VAE_loss.eval(session=sess, feed_dict={encoder_inputs: spectro})
+                temp_log = np.mean(log_likelihood1.eval(session=sess, feed_dict={encoder_inputs: spectro}))
+                temp_KL = np.mean(KL_divergence1.eval(session=sess, feed_dict={encoder_inputs: spectro}))
+                
+                variational_lower_bound_array.append(vlb_eval)  
+                log_likelihood_array.append(temp_log)
+                KL_term_array.append(temp_KL)
+                print "Iteration: {}, Loss: {}, log_likelihood: {}, KL_term{}".format(i, vlb_eval, temp_log, temp_KL )
+                
+            if (batch % hp.CHECK_EVERY == 0):
                 #plot_prior(ii)
                 #ipdb.set_trace()
-                plot_test(sess, batch, t_batch, save_name=save_name)
+                ipdb.set_trace()
+                mu = sess.run(mu_1)
+                sigma = sess.run(sigma_1)
+                plot_test(sess, batch, mu, sigma, save_name=save_name)
 
                 #plot error
                 #iteration_array = [i*CHECK_EVERY for i in range(batch+1)]
@@ -589,7 +520,7 @@ def train():
                 plt.plot(log_likelihood_array1, "md-")
                 plt.legend(['Variational Lower Bound', 'KL divergence', 'Log Likelihood'], loc="best")
                 plt.title('Loss per iteration')
-                plt.savefig(save_name+"loss{}.png".format(batch), format="png")
+                plt.savefig(save_name+"_{}_loss.png".format(batch), format="png")
                 plt.close()
         
                 # plot posterior predictive space
@@ -625,10 +556,10 @@ def train():
                 #plt.close()
 
             # save check point every 500 epoch
-            if batch % SAVE_EVERY == 0:
+            if batch % hp.SAVE_EVERY == 0:
                 save(saver, sess, logdir, step)
                 last_saved_step = step
-        #sess.reset(process_data, [image_batch, test_batch, samples_num])        
+        #sess.reset(process_data, [audio_batch, test_batch, samples_num])        
         coord.request_stop()
         coord.join(threads)
 
