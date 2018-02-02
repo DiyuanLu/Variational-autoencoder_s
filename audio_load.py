@@ -20,44 +20,25 @@ import fnmatch
 
 #### prepare_data
 def find_files(directory, pattern='*.wav'):
-    '''Recursively finds ALL files matching the pattern in the given directory.'''
+    '''Recursively finds ALL files matching the pattern in the given directory.
+    #### find_files is a better replacement for reading csv'''
     files = []
     for root, dirnames, filenames in os.walk(directory):
         for filename in fnmatch.filter(filenames, pattern):
             files.append(os.path.join(root, filename))
     return files
 
-#### find_files is a better replacement for reading csv
-def load_sound_fnames():
-    '''put audio file names in a .csv file'''
-    audio_fpath = '/home/elu/LU/2_Neural_Network/2_NN_projects_codes/tacotron/WEB/'
-    sound_files = []
-    reader = csv.reader(codecs.open(audio_fpath + "audio_files.csv", 'rb', 'utf-8'))
-    for ind, row in enumerate(reader):
-        sound_fname, _ = row
-        sound_file = hp.sound_fpath + "/" + sound_fname  # + ".wav" 
-        sound_files.append(sound_file)
-        #if hp.min_len <= duration <= hp.max_len:
-            ## this returns the 16 jinzhi number each in 4 bits
-            #sound_files.append(sound_queue)
-            #durations.append(duration)
-    return sound_files
-     
+
 def load_train_data(is_training=True):
     """We train on the whole data but the last num_samples."""
     
     sound_files = find_files(hp.sound_fpath)
-    if is_training:
-        if hp.sanity_check: # We use a single mini-batch for training to overfit it.
-            sound_files = sound_files[:hp.batch_size]*1000
-        else:
-            sound_files = sound_files[:-hp.batch_size]
+
+    if hp.sanity_check: # We use a single mini-batch for training to overfit it.
+        sound_files = sound_files[:hp.batch_size]*1000
     else:
-        if hp.sanity_check: # We use a single mini-batch for training to overfit it.
-            sound_files = sound_files[:hp.batch_size]
-        else:
-            sound_files = sound_files[-hp.batch_size:]
-            
+        sound_files = sound_files[:-hp.batch_size]
+
     return sound_files
 
 ################################ load data
@@ -215,7 +196,8 @@ def get_batch(is_training=True):
                                 dynamic_pad=True)
         
         if hp.use_log_magnitude:
-            magnit = tf.log(magnit+1e-10)
+            magnit = tf.log(magnit + 1e-10)
+            spec = tf.log(spec + 1e-10)
             
     return spec, magnit, length, num_batch
     #return sound_batch
@@ -225,23 +207,23 @@ def get_batch(is_training=True):
 
 #def main():
     #ipdb.set_trace()
-    #spec, magnit, length, num_batch = get_batch()
+    #spec, mag, length, num_batch = get_batch()
     ##sound_batch = get_batch()
     #coord = tf.train.Coordinator()
     #sess = tf.Session()
     #sess.run(tf.global_variables_initializer())
 
-    ##coord = tf.train.Coordinator() # OMG!!! This line should NOT be here!
     #threads = tf.train.start_queue_runners(sess=sess)
 
     #for k in range(10):
-        #spectro, magnit, length = sess.run([spec, magnit, length])
+        #spectro = sess.run([spec])
+        ### if don't use the magnit and length data, the next time to sess.run() will have error'
 
 
 
     
 #if __name__ == "__main__":
-    #load_train_data()
+    #main()
 
 
 

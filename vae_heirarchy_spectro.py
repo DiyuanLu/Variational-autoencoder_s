@@ -153,65 +153,43 @@ def bias_variable(shape, name):
 
 #def FC_Layer(X, W, b):
     #return tf.matmul(X, W) + b
+def get_plot(data, title="generated", save_name="save"):
+    num_pairs = 16
+    fig = plt.figure(frameon=False)
+    plt.title(title)
+    for pair in range(num_pairs):
+        #reshaping to show original test image
+        ax = plt.subplot(4,4, pair + 1)
+        ax.set_axis_off()
+        x_image = data[pair, :, :].T
+        ax.matshow(x_image, interpolation='nearest',aspect='auto',cmap="viridis",origin='lower')
 
-def plot_test(sess, model_no, mu, sigma, load_model = False, save_name="save"):
+    plt.subplots_adjust(left=0.06, bottom=0.05, right=0.95, top=0.95,
+                wspace=0.30, hspace=0.22)
+    
+    fig.savefig(save_name + title + '.png', format="png")
+    plt.close()
+
+    
+def plot_test(sess, train_step, mu, sigma, load_model = False, save_name="save"):
     # Here, we plot the reconstructed image on test set images.
     if load_model:
-        saver.restore(sess, os.path.join(os.getcwd(), logdir + '/' + "{}".format(model_No)))
+        saver.restore(sess, os.path.join(os.getcwd(), logdir + '/' + "{}".format(train_step)))
 
-    num_pairs = 16
-    image_indices = np.random.randint(0, 200, num_pairs)
-    #Lets plot 10 digits
-    #mu = sess.run(mu_1)
-    #sigma = sess.run(sigma_1)
     noise = tf.random_normal([1, hp.latent_dim_1])
     max_len = np.max((mu.shape[1], sigma.shape[1]))
     pad_mu = tf.pad(mu, [[0, 0], [0, max_len-mu.shape[1]], [0, 0]], 'CONSTANT')
     pad_sigma = tf.pad(mu, [[0, 0], [0, max_len-mu.shape[1]], [0, 0]], 'CONSTANT')
     # z_1 is the fisrt leverl output(latent variable) of our Encoder
     z = pad_mu + tf.multiply(noise, tf.exp(0.5*pad_sigma))
-    z = sess.run(z)
-    for pair in range(num_pairs):
-        #reshaping to show original test image
-        x_image = z[pair, :128, :].T
+    recon = decoder(z, is_training=False, reuse=True)
+    recon = sess.run(recon)
 
-        fig = plt.figure(frameon=False)
-        ax = plt.Axes(fig, [0., 0., 1., 1.])
-        ax.set_axis_off()
-        fig.add_axes(ax)
-        ax1 = plt.subplot(4,4,index - 1)
-        ax1.matshow(x_image, interpolation='nearest',aspect='auto',cmap="gray_r",origin='lower')
-        fig.savefig(save_name + "_iter{}_samples.png".format(model_no), format="jpg")
-        plt.close()
-
-
+    ######## Plot the reconstruction given random latent vector
+    title="Generated spectrogram"
+    np.savez(save_name + title + ".npz", recon=recon)
+    get_plot(recon, title=title, save_name=save_name)
     
-        index = (1 + pair) * 2
-        ax1 = plt.subplot(4,4,index - 1)  # arrange in 5*4 layout
-        plt.imshow(np.reshape(x_image, (HEIGHT, WIDTH)), cmap="gray_r", aspect="auto")
-        if pair == 0 or pair == 1:
-            plt.title("Original")
-        plt.xlim([0, WIDTH-1])
-        plt.ylim([HEIGHT-1, 0])
-        #ipdb.set_trace()
-        #reconstructed image, feed the test image to the decoder
-        x_image = np.reshape(x[pair, :], (1, -1))
-        x_reconstruction = reconstruction.eval(session=sess, feed_dict={X: x_image})
-        #reshape it to heightxwidth pixels
-        x_reconstruction_image = (np.reshape(x_reconstruction, (HEIGHT, WIDTH)))
-        #plot it!
-        ax2 = plt.subplot(5,4,index, sharex = ax1, sharey=ax1)
-        plt.imshow(x_reconstruction_image, cmap="gray_r", aspect="auto")
-        plt.setp(ax2.get_yticklabels(), visible=False)
-        plt.xlim([0, WIDTH-1])
-        plt.ylim([HEIGHT-1, 0])
-        plt.tight_layout()
-        if pair == 0 or pair == 1:
-            plt.title("Reconstruct")
-    plt.subplots_adjust(left=0.06, bottom=0.05, right=0.95, top=0.95,
-                wspace=0.30, hspace=0.22)
-    plt.savefig(save_name + "samples.png", format="png")
-    plt.close()
     
 
 ############################ Encoder ############################
@@ -319,7 +297,7 @@ hidden_size: Size of the hidden state of the neural net
 Returns:
 bernoulli_logits: logits for the Bernoulli likelihood of the data
 """
-def decoder(decoder_input, is_training=True, scope="encoder", reuse=None):
+def decoder(decoder_input, is_training=True, scope="decoder", reuse=None):
     # layer 1
     #W_dec_2 = weight_variables([latent_dim_2, h_dim_2], "W_dec_2")
     #b_dec_2 = bias_variable([h_dim_2], "b_dec_2")
@@ -405,33 +383,30 @@ def train():
         decoder_input = tf.placeholder(tf.float32, shape = [None, hp.latent_dim_1], name='encoder_inputs')
         is_train = tf.placeholder(tf.bool, name='is_train')
 
-        spectro, magnit, length, num_batch = get_batch(is_training = True)   
-        
-        batch_num = int(num_batch / hp.batch_size)
-        
+        spec, mag, length, num_batch = get_batch(is_training = True)   
 
     with tf.name_scope('VAE'):
         ##### encoder
-        mu_1, sigma_1, z_1 = encoder(spectro)
+        mu_1, sigma_1, z_1 = encoder(spec)
 
         ##### decoder
         reconstruction = decoder(z_1)
 
     ##### Loss
     with tf.name_scope('loss'):
-        log_likelihood1 = tf.reduce_sum(spectro * tf.log(reconstruction + 1e-9) + (1 - spectro) * tf.log(1 - reconstruction + 1e-9))
+        log_likelihood = tf.reduce_sum(spec * tf.log(reconstruction + 1e-9) + (1 - spec) * tf.log(1 - reconstruction + 1e-9))
         
-        KL_divergence1 = -0.5 * tf.reduce_sum(1 + 2*sigma_1 - tf.pow(mu_1, 2) - tf.exp(2 * sigma_1), reduction_indices=1)
+        KL_divergence = -0.5 * tf.reduce_sum(1 + 2*sigma_1 - tf.pow(mu_1, 2) - tf.exp(2 * sigma_1), reduction_indices=1)
         
-        VAE_loss = tf.reduce_mean(log_likelihood1 - KL_divergence1)
+        VAE_loss = tf.reduce_mean(log_likelihood - KL_divergence)
 
         #if hp.target_masking:
             
 
     #Outputs a Summary protocol buffer containing a single scalar value.
     tf.summary.scalar('VAE_loss', VAE_loss)
-    tf.summary.scalar('KL_divergence1', KL_divergence1)
-    tf.summary.scalar('log_likelihood1', log_likelihood1)
+    tf.summary.scalar('KL_divergence', tf.reduce_mean(KL_divergence))
+    tf.summary.scalar('log_likelihood', tf.reduce_mean(log_likelihood))
 
     # ### Optimizer
     optimizer = tf.train.AdadeltaOptimizer(0.0005).minimize(- VAE_loss)   # 
@@ -442,8 +417,6 @@ def train():
     run_metadata = tf.RunMetadata()
     summaries = tf.summary.merge_all()
 
-    
-    
     ##################### Set up session and check the glabal save steps
     #saved_global_step = open_sess(args)
     sess = tf.Session()
@@ -483,45 +456,39 @@ def train():
         t1 = time.time()
 
         # load training batch
-        for batch in range(batch_num):
-            save_name = result_dir + '/' + hp.VERSION + "_step{}_".format(batch)
+        for batch in range(num_batch):
+            save_name = result_dir + '/' + hp.VERSION + "_batch{}_".format(batch)
             if batch % 100 == 0:
-                print "batch", batch
-            spectro, magnit, length = sess.run([spectro, magnit, length])
+                print("batch {}/ total {}".format(batch, num_batch))
+            spectro = sess.run(spec)
 
             #run our optimizer on our data
             sess.run(optimizer, feed_dict={encoder_inputs: spectro})
             
             if (batch % 2 == 0):
-                vlb_eval = VAE_loss.eval(session=sess, feed_dict={encoder_inputs: spectro})
-                temp_log = np.mean(log_likelihood1.eval(session=sess, feed_dict={encoder_inputs: spectro}))
-                temp_KL = np.mean(KL_divergence1.eval(session=sess, feed_dict={encoder_inputs: spectro}))
+                summary, vlb_eval, KL_loss, log_loss, _ = sess.run([summaries, VAE_loss, KL_divergence, log_likelihood, optimizer], feed_dict={encoder_inputs: spectro})
+                writer.add_summary(summary, step)
+
                 
-                variational_lower_bound_array.append(vlb_eval)  
-                log_likelihood_array.append(temp_log)
-                KL_term_array.append(temp_KL)
-                print "Iteration: {}, Loss: {}, log_likelihood: {}, KL_term{}".format(i, vlb_eval, temp_log, temp_KL )
+                #vlb_eval = VAE_loss.eval(session=sess, feed_dict={encoder_inputs: spectro})
+                #temp_log = np.mean(log_likelihood1.eval(session=sess, feed_dict={encoder_inputs: spectro}))
+                #temp_KL = np.mean(KL_divergence.eval(session=sess, feed_dict={encoder_inputs: spectro}))
+                
+                #variational_lower_bound_array.append(vlb_eval)  
+                #log_likelihood_array.append(temp_log)
+                #KL_term_array.append(temp_KL)
+                print "Iteration: {}, Loss: {}, log_likelihood: {}, KL_term{}".format(batch, vlb_eval, np.mean(log_loss), np.mean(KL_loss) )
                 
             if (batch % hp.CHECK_EVERY == 0):
-                #plot_prior(ii)
-                #ipdb.set_trace()
-                ipdb.set_trace()
                 mu = sess.run(mu_1)
                 sigma = sess.run(sigma_1)
+
+                get_plot(spectro, title="Original spectrogram", save_name=save_name)
                 plot_test(sess, batch, mu, sigma, save_name=save_name)
 
                 #plot error
                 #iteration_array = [i*CHECK_EVERY for i in range(batch+1)]
-                plt.figure()
-                #ipdb.set_trace()
-                np.savez("losses_file.npz", )
-                plt.plot(variational_lower_bound_array, "b*-")
-                plt.plot(KL_term_array1, "co-")
-                plt.plot(log_likelihood_array1, "md-")
-                plt.legend(['Variational Lower Bound', 'KL divergence', 'Log Likelihood'], loc="best")
-                plt.title('Loss per iteration')
-                plt.savefig(save_name+"_{}_loss.png".format(batch), format="png")
-                plt.close()
+                
         
                 # plot posterior predictive space
                 # Get fixed MNIST digits for plotting posterior means during training
@@ -559,10 +526,22 @@ def train():
             if batch % hp.SAVE_EVERY == 0:
                 save(saver, sess, logdir, step)
                 last_saved_step = step
+        plt.figure()
+        #ipdb.set_trace()
+        np.savez("losses_file.npz", vaeloss=variational_lower_bound_array, KL=KL_term_array, logloss=log_likelihood_array)
+        plt.plot(variational_lower_bound_array, "b*-")
+        plt.plot(KL_term_array, "co-")
+        plt.plot(log_likelihood_array, "md-")
+        plt.legend(['Variational Lower Bound', 'KL divergence', 'Log Likelihood'], loc="best")
+        plt.title('Loss per iteration')
+        plt.savefig(save_name+"_{}_loss.png".format(batch), format="png")
+        plt.close()
+    
         #sess.reset(process_data, [audio_batch, test_batch, samples_num])        
         coord.request_stop()
         coord.join(threads)
 
+    
     
 
 
